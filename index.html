@@ -5470,7 +5470,31 @@ function regenerateLots() {
 }
 
 // -- Planning Area Split by Acreage --
+// Split polygon at a horizontal (y) or vertical (x) line
+// Returns vertices on 'low' (south/west) or 'high' (north/east) side
+function splitBoundaryAtLine(verts, axis, val, side) {
+  const result = [];
+  const n = verts.length;
+  for (let i = 0; i < n; i++) {
+    const cur = verts[i];
+    const next = verts[(i + 1) % n];
+    const curVal = axis === 'y' ? cur.y : cur.x;
+    const nextVal = axis === 'y' ? next.y : next.x;
+    const curIn = side === 'low' ? curVal <= val : curVal >= val;
+    const nextIn = side === 'low' ? nextVal <= val : nextVal >= val;
+
+    if (curIn) result.push({ x: cur.x, y: cur.y });
+
+    if (curIn !== nextIn) {
+      const t = (val - curVal) / (nextVal - curVal);
+      result.push({ x: cur.x + t*(next.x - cur.x), y: cur.y + t*(next.y - cur.y) });
+    }
+  }
+  return result;
+}
+
 function splitByAcreage() {
+  try {
   if (!state.isClosed || state.vertices.length < 3) {
     showToast('Define a boundary first', 'warning');
     return;
@@ -5494,80 +5518,57 @@ function splitByAcreage() {
   const minY = Math.min(...ys), maxY = Math.max(...ys);
 
   // Binary search for the split line position
+  // Use simple line-split method (no clipPolygonSH dependency)
   const splitAxis = (dir === 'south' || dir === 'north') ? 'y' : 'x';
   let lo = splitAxis === 'y' ? minY : minX;
   let hi = splitAxis === 'y' ? maxY : maxX;
-  const pad = 500; // padding for clip rectangles
 
-  for (let iter = 0; iter < 60; iter++) {
+  // Binary search for the split line
+  for (let iter = 0; iter < 80; iter++) {
     const mid = (lo + hi) / 2;
-    // Clip the south/west portion
-    let clipRect;
-    if (splitAxis === 'y') {
-      clipRect = [
-        { x: minX - pad, y: minY - pad }, { x: maxX + pad, y: minY - pad },
-        { x: maxX + pad, y: mid }, { x: minX - pad, y: mid }
-      ];
-    } else {
-      clipRect = [
-        { x: minX - pad, y: minY - pad }, { x: mid, y: minY - pad },
-        { x: mid, y: maxY + pad }, { x: minX - pad, y: maxY + pad }
-      ];
-    }
-    const clipped = clipPolygonSH(state.vertices, clipRect);
-    const lowArea = clipped.length >= 3 ? polygonArea(clipped) : 0;
+    const lowVerts = splitBoundaryAtLine(state.vertices, splitAxis, mid, 'low');
+    const lowArea = lowVerts.length >= 3 ? polygonArea(lowVerts) : 0;
 
     if (dir === 'south' || dir === 'west') {
       if (lowArea < targetSqFt) lo = mid; else hi = mid;
     } else {
-      const highArea = totalSqFt - lowArea;
-      if (highArea < targetSqFt) hi = mid; else lo = mid;
+      if ((totalSqFt - lowArea) < targetSqFt) hi = mid; else lo = mid;
     }
-    if (Math.abs(hi - lo) < 0.1) break;
+    if (Math.abs(hi - lo) < 0.01) break;
   }
 
   const splitVal = (lo + hi) / 2;
 
-  // Create the two clip polygons
-  let clipPolyA, clipPolyB;
-  if (splitAxis === 'y') {
-    clipPolyA = [
-      { x: minX - pad, y: minY - pad }, { x: maxX + pad, y: minY - pad },
-      { x: maxX + pad, y: splitVal }, { x: minX - pad, y: splitVal }
-    ];
-    clipPolyB = [
-      { x: minX - pad, y: splitVal }, { x: maxX + pad, y: splitVal },
-      { x: maxX + pad, y: maxY + pad }, { x: minX - pad, y: maxY + pad }
-    ];
-  } else {
-    clipPolyA = [
-      { x: minX - pad, y: minY - pad }, { x: splitVal, y: minY - pad },
-      { x: splitVal, y: maxY + pad }, { x: minX - pad, y: maxY + pad }
-    ];
-    clipPolyB = [
-      { x: splitVal, y: minY - pad }, { x: maxX + pad, y: minY - pad },
-      { x: maxX + pad, y: maxY + pad }, { x: splitVal, y: maxY + pad }
-    ];
-  }
+  // Create two sub-polygons
+  const areaA = splitBoundaryAtLine(state.vertices, splitAxis, splitVal, 'low');
+  const areaB = splitBoundaryAtLine(state.vertices, splitAxis, splitVal, 'high');
 
-  const areaA = clipPolygonSH(state.vertices, clipPolyA);
-  const areaB = clipPolygonSH(state.vertices, clipPolyB);
-
-  if (areaA.length < 3 && areaB.length < 3) {
-    showToast('Split failed — try different acreage or direction', 'error');
+  if (areaA.length < 3 || areaB.length < 3) {
+    showToast('Split failed — try a different direction or acreage', 'error');
     return;
   }
 
   const dirLabel = dir.charAt(0).toUpperCase() + dir.slice(1);
   const oppLabel = dir === 'south' ? 'North' : dir === 'north' ? 'South' : dir === 'east' ? 'West' : 'East';
 
-  // Store the split line for rendering
+  // Store the split line for rendering — find where it crosses the boundary
   state.paSplitLines = [];
-  const splitLineSegs = splitAxis === 'y'
-    ? clipLineToPolygon({ x: minX - pad, y: splitVal }, { x: maxX + pad, y: splitVal }, state.vertices)
-    : clipLineToPolygon({ x: splitVal, y: minY - pad }, { x: splitVal, y: maxY + pad }, state.vertices);
-  if (splitLineSegs.length > 0) {
-    state.paSplitLines.push(...splitLineSegs);
+  const splitPts = [];
+  for (let i = 0; i < state.vertices.length; i++) {
+    const j = (i + 1) % state.vertices.length;
+    const a = state.vertices[i], b = state.vertices[j];
+    const aV = splitAxis === 'y' ? a.y : a.x;
+    const bV = splitAxis === 'y' ? b.y : b.x;
+    if ((aV - splitVal) * (bV - splitVal) < 0) {
+      const t = (splitVal - aV) / (bV - aV);
+      splitPts.push({ x: a.x + t*(b.x-a.x), y: a.y + t*(b.y-a.y) });
+    }
+  }
+  if (splitPts.length >= 2) {
+    splitPts.sort((a,b) => splitAxis === 'y' ? a.x-b.x : a.y-b.y);
+    for (let i = 0; i < splitPts.length-1; i += 2) {
+      state.paSplitLines.push([splitPts[i], splitPts[i+1]]);
+    }
   }
 
   // Get per-PA criteria from UI
@@ -5616,6 +5617,9 @@ function splitByAcreage() {
 
   // Auto-generate layout within the new PAs
   generateLayout();
+  } catch(err) {
+    showToast('Split error: ' + err.message, 'error');
+  }
 }
 
 // ============================================
