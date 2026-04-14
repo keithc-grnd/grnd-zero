@@ -1195,9 +1195,43 @@ input[type="range"]::-moz-range-thumb {
       </div>
       <div class="panel-section-body">
         <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.4;">
-          Divide site into sub-areas with independent density targets.<br>
-          Click <strong style="color:var(--text-label)">Draw Area</strong> then click on canvas to define.
+          Divide site into sub-areas with independent density/layout targets.
         </p>
+
+        <div class="param-group-label">Quick Split by Acreage</div>
+        <div class="form-row">
+          <label>Split Description</label>
+          <select id="paSplitDir">
+            <option value="south">Southerly</option>
+            <option value="north">Northerly</option>
+            <option value="east">Easterly</option>
+            <option value="west">Westerly</option>
+          </select>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Acres</label>
+            <input type="number" id="paSplitAcres" value="10" min="0.5" max="999" step="0.5" />
+          </div>
+          <div>
+            <label>Target (du/ac)</label>
+            <input type="number" id="paSplitDensity" value="6" min="1" max="30" step="0.5" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Layout Pattern</label>
+          <select id="paSplitPattern">
+            <option value="grid">Grid</option>
+            <option value="curvilinear" selected>Curvilinear (preferred)</option>
+            <option value="cul-de-sac-loop">Cul-de-sac Loop</option>
+            <option value="spine-branches">Spine + Branches</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="splitByAcreage()">Create Split</button>
+
+        <hr class="param-divider" />
+
+        <div class="param-group-label">Custom Draw</div>
         <div class="form-row-inline">
           <div>
             <label>Area Name</label>
@@ -1208,7 +1242,7 @@ input[type="range"]::-moz-range-thumb {
             <input type="number" id="paDensity" value="6" min="1" max="30" step="0.5" />
           </div>
         </div>
-        <button class="btn btn-primary" onclick="startDrawPlanningArea()" id="btnDrawPA">Draw Area</button>
+        <button class="btn" onclick="startDrawPlanningArea()" id="btnDrawPA">Draw Area</button>
         <div id="planningAreaList" style="margin-top:8px;"></div>
       </div>
     </div>
@@ -1379,16 +1413,42 @@ input[type="range"]::-moz-range-thumb {
       </div>
     </div>
 
-    <!-- Generate Layout — Phase 3 -->
+    <!-- Interactive Design Tools -->
     <div class="panel-section">
       <div class="panel-section-header" onclick="toggleSection(this)">
         <span class="collapse-icon">&#9660;</span>
-        <h3>Generate Layout</h3>
+        <h3>Design Tools</h3>
       </div>
       <div class="panel-section-body">
+        <div class="param-group-label">Place Elements</div>
+        <div class="btn-group">
+          <button class="btn" onclick="startPlaceEntry()" id="btnPlaceEntry">Place Entry</button>
+          <button class="btn" onclick="startPlaceStreet()" id="btnPlaceStreet">Place Street</button>
+        </div>
+        <div class="btn-group" style="margin-top:4px;">
+          <button class="btn" onclick="startPlaceCds()" id="btnPlaceCds">Place Cul-de-sac</button>
+          <button class="btn" onclick="startPlaceKnuckle()" id="btnPlaceKnuckle">Place Knuckle</button>
+        </div>
+
+        <hr class="param-divider" />
+
+        <div class="param-group-label">Edit Mode</div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="editMode" onchange="toggleEditMode(this.checked)" /> Enable Drag Edit
+          </label>
+        </div>
+        <p style="font-size:9px; color:var(--text-secondary); line-height:1.4;">
+          With Edit Mode on: click streets to select, drag to move. Lots regenerate automatically.
+        </p>
+
+        <hr class="param-divider" />
+
+        <div class="param-group-label">Auto-Generate</div>
         <button class="btn btn-primary" onclick="generateLayout()" id="btnGenerate" style="font-size:12px; padding:10px 14px;">
           Generate Layout
         </button>
+        <button class="btn" onclick="regenerateLots()" style="margin-top:6px;">Regenerate Lots Only</button>
         <button class="btn" onclick="clearLayout()" style="margin-top:6px;">Clear Layout Only</button>
       </div>
     </div>
@@ -3964,13 +4024,15 @@ function drawBufferedBoundary() {
 }
 
 function drawStreets() {
-  for (const st of state.streets) {
-    // Centerline — yellow
+  for (let si = 0; si < state.streets.length; si++) {
+    const st = state.streets[si];
+    const isSelected = state.editMode && si === state.selectedStreet;
+    // Centerline — yellow (highlighted if selected)
     const [a, b] = st.centerline;
     const [ax, ay] = worldToScreen(a.x, a.y);
     const [bx, by] = worldToScreen(b.x, b.y);
-    ctx.strokeStyle = 'rgba(255, 217, 61, 0.6)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = isSelected ? 'rgba(0, 200, 255, 0.9)' : 'rgba(255, 217, 61, 0.6)';
+    ctx.lineWidth = isSelected ? 3 : 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
@@ -4813,6 +4875,444 @@ async function askAI() {
 }
 
 // ============================================
+// INTERACTIVE DESIGN TOOLS
+// ============================================
+state.placingEntry = false;
+state.placingStreet = false;
+state.streetStartPt = null;
+state.placingCds = false;
+state.placingKnuckle = false;
+state.editMode = false;
+state.selectedStreet = -1;
+state.draggingStreet = false;
+state.manualEntries = [];     // user-placed entries
+state.manualStreets = [];     // user-placed streets
+state.manualCds = [];         // user-placed cul-de-sacs
+
+// -- Place Entry: click on boundary edge, street enters perpendicular --
+function startPlaceEntry() {
+  if (!state.isClosed) { showToast('Define a boundary first', 'warning'); return; }
+  state.placingEntry = true;
+  state.placingStreet = false;
+  state.placingCds = false;
+  state.placingKnuckle = false;
+  document.getElementById('btnPlaceEntry').textContent = 'Click on boundary...';
+  document.getElementById('canvas-hint').textContent = 'Click on a boundary edge to place a street entry (perpendicular)';
+  canvas.style.cursor = 'crosshair';
+}
+
+function placeEntryAt(worldX, worldY) {
+  const params = getDesignParams();
+  const halfROW = params.rowWidth / 2;
+  // Find nearest boundary edge
+  let bestDist = Infinity, bestEdgeIdx = -1, bestProjPt = null, bestNormal = null;
+  for (let i = 0; i < state.vertices.length; i++) {
+    const j = (i + 1) % state.vertices.length;
+    const a = state.vertices[i], b = state.vertices[j];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const t = Math.max(0, Math.min(1, ((worldX - a.x)*dx + (worldY - a.y)*dy) / (len*len)));
+    const projX = a.x + t * dx, projY = a.y + t * dy;
+    const d = Math.hypot(worldX - projX, worldY - projY);
+    if (d < bestDist) {
+      bestDist = d;
+      bestEdgeIdx = i;
+      bestProjPt = { x: projX, y: projY };
+      // Inward normal
+      const ux = dx/len, uy = dy/len;
+      let nx = -uy, ny = ux;
+      const cx = state.vertices.reduce((s,v) => s+v.x, 0) / state.vertices.length;
+      const cy = state.vertices.reduce((s,v) => s+v.y, 0) / state.vertices.length;
+      if (nx*(cx-projX) + ny*(cy-projY) < 0) { nx = -nx; ny = -ny; }
+      bestNormal = { x: nx, y: ny };
+    }
+  }
+  if (!bestProjPt) return;
+
+  // Create entry street perpendicular to boundary, extending inward
+  const entryLen = params.minLotDepth * 2 + params.rowWidth;
+  const endPt = { x: bestProjPt.x + bestNormal.x * entryLen, y: bestProjPt.y + bestNormal.y * entryLen };
+  const edgeA = state.vertices[bestEdgeIdx];
+  const edgeB = state.vertices[(bestEdgeIdx+1) % state.vertices.length];
+  const edx = edgeB.x - edgeA.x, edy = edgeB.y - edgeA.y;
+  const eLen = Math.sqrt(edx*edx + edy*edy) || 1;
+  const sNx = edx/eLen, sNy = edy/eLen;
+
+  const entry = {
+    centerline: [bestProjPt, endPt],
+    rowLeft: [
+      { x: bestProjPt.x + sNx * halfROW, y: bestProjPt.y + sNy * halfROW },
+      { x: endPt.x + sNx * halfROW, y: endPt.y + sNy * halfROW }
+    ],
+    rowRight: [
+      { x: bestProjPt.x - sNx * halfROW, y: bestProjPt.y - sNy * halfROW },
+      { x: endPt.x - sNx * halfROW, y: endPt.y - sNy * halfROW }
+    ],
+    isPrimary: false,
+    _name: 'Entry ' + (state.manualEntries.length + 1),
+    isManual: true
+  };
+  state.manualEntries.push(entry);
+  state.streets.push(entry);
+
+  state.placingEntry = false;
+  document.getElementById('btnPlaceEntry').textContent = 'Place Entry';
+  document.getElementById('canvas-hint').textContent = 'Entry placed — click Generate or place more elements';
+  regenerateLots();
+  render();
+  showToast('Entry placed perpendicular to boundary', 'success');
+}
+
+// -- Place Street: click two points --
+function startPlaceStreet() {
+  if (!state.isClosed) { showToast('Define a boundary first', 'warning'); return; }
+  state.placingStreet = true;
+  state.streetStartPt = null;
+  state.placingEntry = false;
+  state.placingCds = false;
+  document.getElementById('btnPlaceStreet').textContent = 'Click start point...';
+  document.getElementById('canvas-hint').textContent = 'Click start point for street, then click end point';
+  canvas.style.cursor = 'crosshair';
+}
+
+function placeStreetPoint(worldX, worldY) {
+  const params = getDesignParams();
+  const halfROW = params.rowWidth / 2;
+  if (!state.streetStartPt) {
+    state.streetStartPt = { x: worldX, y: worldY };
+    document.getElementById('btnPlaceStreet').textContent = 'Click end point...';
+    document.getElementById('canvas-hint').textContent = 'Click end point for street';
+    return;
+  }
+  const a = state.streetStartPt;
+  const b = { x: worldX, y: worldY };
+  const dx = b.x-a.x, dy = b.y-a.y;
+  const len = Math.sqrt(dx*dx+dy*dy) || 1;
+  const nx = -dy/len, ny = dx/len;
+
+  const street = {
+    centerline: [a, b],
+    rowLeft: [
+      { x: a.x + nx*halfROW, y: a.y + ny*halfROW },
+      { x: b.x + nx*halfROW, y: b.y + ny*halfROW }
+    ],
+    rowRight: [
+      { x: a.x - nx*halfROW, y: a.y - ny*halfROW },
+      { x: b.x - nx*halfROW, y: b.y - ny*halfROW }
+    ],
+    isPrimary: true,
+    _name: 'Street ' + (state.manualStreets.length + 1),
+    isManual: true
+  };
+  state.manualStreets.push(street);
+  state.streets.push(street);
+
+  state.placingStreet = false;
+  state.streetStartPt = null;
+  document.getElementById('btnPlaceStreet').textContent = 'Place Street';
+  document.getElementById('canvas-hint').textContent = 'Street placed — lots will regenerate';
+  regenerateLots();
+  render();
+  showToast('Street placed', 'success');
+}
+
+// -- Place Cul-de-sac: click location --
+function startPlaceCds() {
+  if (!state.isClosed) { showToast('Define a boundary first', 'warning'); return; }
+  state.placingCds = true;
+  state.placingEntry = false;
+  state.placingStreet = false;
+  document.getElementById('btnPlaceCds').textContent = 'Click location...';
+  document.getElementById('canvas-hint').textContent = 'Click where the cul-de-sac center should go';
+}
+
+function placeCdsAt(worldX, worldY) {
+  const params = getDesignParams();
+  state.culdesacs.push({
+    center: { x: worldX, y: worldY },
+    rowRadius: params.cdsRadius,
+    pavedRadius: params.cdsRadius - 0.5,
+    throatWidth: params.cdsThroatWidth,
+    throatLength: params.cdsThroatLength,
+    type: params.cdsType,
+    direction: { x: 0, y: -1 },
+    isManual: true
+  });
+  // Generate lots around it
+  const cdsLots = generateCulDeSacLots(
+    { x: worldX, y: worldY }, params.cdsRadius, params.minLotDepth,
+    params.minLotWidth, state.lots.length + 1, params,
+    state.bufferedBoundary.length > 2 ? state.bufferedBoundary : state.vertices
+  );
+  state.lots.push(...cdsLots);
+
+  state.placingCds = false;
+  document.getElementById('btnPlaceCds').textContent = 'Place Cul-de-sac';
+  document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed';
+  render();
+  showToast('Cul-de-sac placed with ' + cdsLots.length + ' lots', 'success');
+}
+
+// -- Place Knuckle: click at intersection --
+function startPlaceKnuckle() {
+  state.placingKnuckle = true;
+  state.placingEntry = false;
+  state.placingStreet = false;
+  state.placingCds = false;
+  document.getElementById('btnPlaceKnuckle').textContent = 'Click location...';
+  document.getElementById('canvas-hint').textContent = 'Click at a street intersection to place a knuckle';
+}
+
+function placeKnuckleAt(worldX, worldY) {
+  const params = getDesignParams();
+  state.knuckles.push({
+    center: { x: worldX, y: worldY },
+    radius: params.cdsKnuckleRadius,
+    angle: 90,
+    dirA: { x: 1, y: 0 },
+    dirB: { x: 0, y: 1 },
+    isManual: true
+  });
+  state.placingKnuckle = false;
+  document.getElementById('btnPlaceKnuckle').textContent = 'Place Knuckle';
+  render();
+  showToast('Knuckle placed', 'success');
+}
+
+// -- Edit Mode: select and drag streets --
+function toggleEditMode(enabled) {
+  state.editMode = enabled;
+  if (enabled) {
+    document.getElementById('canvas-hint').textContent = 'Edit Mode: click a street to select, drag to move. Shift+click for cul-de-sacs.';
+    canvas.style.cursor = 'pointer';
+  } else {
+    state.selectedStreet = -1;
+    canvas.style.cursor = 'crosshair';
+    document.getElementById('canvas-hint').textContent = 'Edit mode off';
+    render();
+  }
+}
+
+function findNearestStreet(worldX, worldY, threshold) {
+  let best = -1, bestDist = threshold || 30;
+  for (let i = 0; i < state.streets.length; i++) {
+    const [a, b] = state.streets[i].centerline;
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const len = Math.sqrt(dx*dx+dy*dy) || 1;
+    const t = Math.max(0, Math.min(1, ((worldX-a.x)*dx + (worldY-a.y)*dy) / (len*len)));
+    const px = a.x + t*dx, py = a.y + t*dy;
+    const d = Math.hypot(worldX-px, worldY-py);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+function moveStreet(idx, dx, dy) {
+  const st = state.streets[idx];
+  for (const pt of st.centerline) { pt.x += dx; pt.y += dy; }
+  for (const pt of st.rowLeft) { pt.x += dx; pt.y += dy; }
+  for (const pt of st.rowRight) { pt.x += dx; pt.y += dy; }
+}
+
+// -- Regenerate lots from current streets (dynamic update) --
+function regenerateLots() {
+  if (!state.isClosed || state.streets.length === 0) return;
+  const params = getDesignParams();
+  const buffer = state.bufferedBoundary.length > 2
+    ? state.bufferedBoundary
+    : offsetPolygon(state.vertices, params.perimeterSetback);
+  if (buffer.length < 3) return;
+  state.bufferedBoundary = buffer;
+
+  // Clear only auto-generated lots, keep manual adjustments
+  state.lots = [];
+  let lotNum = 1;
+
+  // For each pair of parallel streets, create lots between their ROW edges
+  for (let i = 0; i < state.streets.length; i++) {
+    const st = state.streets[i];
+    const [a, b] = st.centerline;
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const len = Math.sqrt(dx*dx+dy*dy);
+    if (len < params.minLotWidth) continue;
+    const ux = dx/len, uy = dy/len;
+    const nx = -uy, ny = ux;
+    const halfROW = params.rowWidth / 2;
+
+    // Generate lots on both sides of the street
+    const numLots = Math.max(1, Math.floor(len / params.minLotWidth));
+    const actualWidth = len / numLots;
+
+    for (const side of [1, -1]) {
+      for (let li = 0; li < numLots; li++) {
+        const t0 = li / numLots, t1 = (li+1) / numLots;
+        const p0 = { x: a.x + dx*t0, y: a.y + dy*t0 };
+        const p1 = { x: a.x + dx*t1, y: a.y + dy*t1 };
+
+        const lotPoly = [
+          { x: p0.x + nx*halfROW*side, y: p0.y + ny*halfROW*side },
+          { x: p1.x + nx*halfROW*side, y: p1.y + ny*halfROW*side },
+          { x: p1.x + nx*(halfROW + params.minLotDepth)*side, y: p1.y + ny*(halfROW + params.minLotDepth)*side },
+          { x: p0.x + nx*(halfROW + params.minLotDepth)*side, y: p0.y + ny*(halfROW + params.minLotDepth)*side }
+        ];
+
+        const clipped = clipPolygonSH(lotPoly, buffer);
+        if (clipped.length < 3) continue;
+        const area = polygonArea(clipped);
+        if (area < 100) continue;
+
+        // Check this lot doesn't overlap any other street ROW
+        let overlapsStreet = false;
+        for (let j = 0; j < state.streets.length; j++) {
+          if (j === i) continue;
+          const midX = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
+          const midY = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
+          const [sa, sb] = state.streets[j].centerline;
+          const sdx = sb.x-sa.x, sdy = sb.y-sa.y;
+          const slen = Math.sqrt(sdx*sdx+sdy*sdy) || 1;
+          const st2 = Math.max(0, Math.min(1, ((midX-sa.x)*sdx + (midY-sa.y)*sdy) / (slen*slen)));
+          const spx = sa.x + st2*sdx, spy = sa.y + st2*sdy;
+          if (Math.hypot(midX-spx, midY-spy) < params.rowWidth) {
+            overlapsStreet = true;
+            break;
+          }
+        }
+        if (overlapsStreet) continue;
+
+        // Check not inside any cul-de-sac
+        let overlapsCds = false;
+        for (const cds of state.culdesacs) {
+          const midX = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
+          const midY = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
+          if (Math.hypot(midX - cds.center.x, midY - cds.center.y) < cds.rowRadius + 5) {
+            overlapsCds = true;
+            break;
+          }
+        }
+        if (overlapsCds) continue;
+
+        state.lots.push({
+          polygon: clipped, area, number: lotNum++,
+          compliant: area >= params.minLotArea,
+          width: actualWidth, depth: params.minLotDepth
+        });
+      }
+    }
+  }
+
+  updateYieldSummary(params);
+  render();
+}
+
+// -- Planning Area Split by Acreage --
+function splitByAcreage() {
+  if (!state.isClosed || state.vertices.length < 3) {
+    showToast('Define a boundary first', 'warning');
+    return;
+  }
+  const dir = document.getElementById('paSplitDir').value;
+  const targetAcres = parseFloat(document.getElementById('paSplitAcres').value) || 10;
+  const targetDensity = parseFloat(document.getElementById('paSplitDensity').value) || 6;
+  const pattern = document.getElementById('paSplitPattern').value;
+  const targetSqFt = targetAcres * 43560;
+  const totalSqFt = calcArea(state.vertices);
+
+  if (targetSqFt >= totalSqFt) {
+    showToast('Target acreage exceeds total site area', 'warning');
+    return;
+  }
+
+  // Find bounding box
+  const xs = state.vertices.map(v => v.x);
+  const ys = state.vertices.map(v => v.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+  // Binary search for the split line position
+  let lo, hi, splitAxis;
+  if (dir === 'south' || dir === 'north') {
+    splitAxis = 'y';
+    lo = minY; hi = maxY;
+  } else {
+    splitAxis = 'x';
+    lo = minX; hi = maxX;
+  }
+
+  // Binary search: find the split line that gives targetSqFt on the desired side
+  for (let iter = 0; iter < 50; iter++) {
+    const mid = (lo + hi) / 2;
+    const clipPoly = splitAxis === 'y'
+      ? [{ x: minX - 100, y: minY - 100 }, { x: maxX + 100, y: minY - 100 },
+         { x: maxX + 100, y: mid }, { x: minX - 100, y: mid }]
+      : [{ x: minX - 100, y: minY - 100 }, { x: mid, y: minY - 100 },
+         { x: mid, y: maxY + 100 }, { x: minX - 100, y: maxY + 100 }];
+
+    const clipped = clipPolygonSH(state.vertices, clipPoly);
+    const area = clipped.length >= 3 ? polygonArea(clipped) : 0;
+
+    if (dir === 'south' || dir === 'west') {
+      if (area < targetSqFt) hi = mid + (hi - mid) * 0.5 + 0.1; else hi = mid;
+      if (Math.abs(area - targetSqFt) < 100) break;
+      if (area < targetSqFt) lo = lo; // keep lo
+      else lo = mid;
+    } else {
+      // North or East: we want the UPPER/RIGHT portion
+      const upperArea = totalSqFt - area;
+      if (upperArea < targetSqFt) lo = mid;
+      else hi = mid;
+      if (Math.abs(upperArea - targetSqFt) < 100) break;
+    }
+  }
+
+  const splitVal = (lo + hi) / 2;
+
+  // Create the two planning areas
+  const clipPolyA = splitAxis === 'y'
+    ? [{ x: minX - 100, y: minY - 100 }, { x: maxX + 100, y: minY - 100 },
+       { x: maxX + 100, y: splitVal }, { x: minX - 100, y: splitVal }]
+    : [{ x: minX - 100, y: minY - 100 }, { x: splitVal, y: minY - 100 },
+       { x: splitVal, y: maxY + 100 }, { x: minX - 100, y: maxY + 100 }];
+
+  const clipPolyB = splitAxis === 'y'
+    ? [{ x: minX - 100, y: splitVal }, { x: maxX + 100, y: splitVal },
+       { x: maxX + 100, y: maxY + 100 }, { x: minX - 100, y: maxY + 100 }]
+    : [{ x: splitVal, y: minY - 100 }, { x: maxX + 100, y: minY - 100 },
+       { x: maxX + 100, y: maxY + 100 }, { x: splitVal, y: maxY + 100 }];
+
+  const areaA = clipPolygonSH(state.vertices, clipPolyA);
+  const areaB = clipPolygonSH(state.vertices, clipPolyB);
+
+  const dirLabel = dir.charAt(0).toUpperCase() + dir.slice(1);
+  const oppLabel = dir === 'south' ? 'North' : dir === 'north' ? 'South' : dir === 'east' ? 'West' : 'East';
+
+  if (areaA.length >= 3) {
+    state.planningAreas.push({
+      name: 'PA1 — ' + dirLabel + ' ' + targetAcres + ' ac',
+      targetDensity: targetDensity,
+      polygon: areaA,
+      color: PA_COLORS[state.planningAreas.length % PA_COLORS.length],
+      area: polygonArea(areaA),
+      layoutPattern: pattern
+    });
+  }
+  if (areaB.length >= 3) {
+    const balanceAcres = (polygonArea(areaB) / 43560).toFixed(1);
+    state.planningAreas.push({
+      name: 'PA2 — ' + oppLabel + ' balance (' + balanceAcres + ' ac)',
+      targetDensity: targetDensity,
+      polygon: areaB,
+      color: PA_COLORS[state.planningAreas.length % PA_COLORS.length],
+      area: polygonArea(areaB),
+      layoutPattern: pattern
+    });
+  }
+
+  updatePlanningAreaList();
+  render();
+  showToast('Site split: ' + dirLabel + 'erly ' + targetAcres + ' ac + ' + oppLabel + ' balance', 'success');
+}
+
+// ============================================
 // PLANNING AREAS
 // ============================================
 state.planningAreas = [];
@@ -5279,8 +5779,23 @@ canvas.addEventListener('click', function(e) {
   let [wx, wy] = screenToWorld(sx, sy);
 
   // Background image placement
-  if (state.bgPlacing) {
-    placeBgImageAt(wx, wy);
+  if (state.bgPlacing) { placeBgImageAt(wx, wy); return; }
+
+  // Interactive design tools
+  if (state.placingEntry) { placeEntryAt(wx, wy); return; }
+  if (state.placingStreet) { [wx, wy] = snapToGrid(wx, wy); placeStreetPoint(wx, wy); return; }
+  if (state.placingCds) { placeCdsAt(wx, wy); return; }
+  if (state.placingKnuckle) { placeKnuckleAt(wx, wy); return; }
+
+  // Edit mode: select street
+  if (state.editMode) {
+    const idx = findNearestStreet(wx, wy, state.scale * 20 / state.zoom);
+    state.selectedStreet = idx;
+    render();
+    if (idx >= 0) {
+      const st = state.streets[idx];
+      showToast('Selected: ' + (st._name || 'Street ' + idx), 'info');
+    }
     return;
   }
 
@@ -5301,8 +5816,17 @@ canvas.addEventListener('dblclick', function(e) {
   }
 }, true);
 
-// Background image drag-to-reposition
+// Edit mode street dragging + Background image drag
 canvas.addEventListener('mousedown', function(e) {
+  if (state.editMode && state.selectedStreet >= 0 && e.button === 0 && !e.shiftKey) {
+    state.draggingStreet = true;
+    const rect = canvas.getBoundingClientRect();
+    state.dragLastX = e.clientX - rect.left;
+    state.dragLastY = e.clientY - rect.top;
+    canvas.style.cursor = 'move';
+    e.preventDefault();
+    return;
+  }
   if (state.bgImage && state.bgDraggable && !state.bgPlacing && !state.isDrawing && !state.drawingPA && e.button === 0) {
     // Check if click is near the image anchor
     const rect = canvas.getBoundingClientRect();
@@ -5327,6 +5851,21 @@ canvas.addEventListener('mousedown', function(e) {
 });
 
 canvas.addEventListener('mousemove', function(e) {
+  // Street dragging in edit mode
+  if (state.draggingStreet && state.selectedStreet >= 0) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const dx = sx - state.dragLastX;
+    const dy = sy - state.dragLastY;
+    const worldDx = (dx / state.zoom) * state.scale;
+    const worldDy = -(dy / state.zoom) * state.scale;
+    moveStreet(state.selectedStreet, worldDx, worldDy);
+    state.dragLastX = sx;
+    state.dragLastY = sy;
+    render();
+    return;
+  }
   if (state.bgDragging) {
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
@@ -5347,6 +5886,12 @@ canvas.addEventListener('mousemove', function(e) {
 });
 
 canvas.addEventListener('mouseup', function(e) {
+  if (state.draggingStreet) {
+    state.draggingStreet = false;
+    canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
+    regenerateLots(); // Dynamic lot update after street move
+    showToast('Street moved — lots regenerated', 'info');
+  }
   if (state.bgDragging) {
     state.bgDragging = false;
     canvas.style.cursor = 'crosshair';
