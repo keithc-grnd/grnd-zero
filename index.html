@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRND ZERO — Civil Subdivision Site Planner</title>
+<style>
+/* ========================================
+   RESET & BASE
+   Inspired by Civil 3D dark chrome + ArcGIS Urban dashboards
+   ======================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Sidebar chrome — Civil 3D dark theme */
+  --panel-bg: #1E1E1E;
+  --panel-border: #333333;
+  --panel-header: #2A2A2A;
+  --input-bg: #2C2C2C;
+  --input-border: #444444;
+  --input-focus: #0078D4;
+  --text-primary: #E0E0E0;
+  --text-secondary: #999999;
+  --text-label: #BBBBBB;
+
+  /* Canvas — engineering drawing style */
+  --canvas-bg: #1A1A2E;
+  --grid-color: #2A2A4A;
+  --grid-major: #333355;
+
+  /* Measurement colors — Civil 3D convention */
+  --color-distance: #FF6B6B;
+  --color-bearing: #4ECDC4;
+  --color-area: #45B7D1;
+  --color-boundary: #FFD93D;
+  --color-vertex: #FF6B6B;
+  --color-edge: #E8E8E8;
+  --color-fill: rgba(69, 183, 209, 0.08);
+  --color-accent: #0078D4;
+  --color-success: #4CAF50;
+  --color-warning: #FF9800;
+  --color-danger: #F44336;
+
+  /* Layout */
+  --panel-width: 320px;
+  --header-height: 48px;
+  --status-height: 32px;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #111111;
+  color: var(--text-primary);
+}
+
+/* ========================================
+   HEADER BAR — Inspired by Civil 3D ribbon
+   ======================================== */
+#app-header {
+  height: var(--header-height);
+  background: linear-gradient(180deg, #2D2D2D 0%, #1E1E1E 100%);
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  user-select: none;
+}
+
+#app-header .logo {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--color-accent);
+  text-transform: uppercase;
+}
+
+#app-header .app-title {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+#app-header .phase-badge {
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+}
+
+#app-header .coords-display {
+  margin-left: auto;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--input-bg);
+  padding: 4px 12px;
+  border-radius: 3px;
+  border: 1px solid var(--panel-border);
+  min-width: 220px;
+  text-align: center;
+}
+
+/* ========================================
+   MAIN LAYOUT — Left panel + Canvas
+   ======================================== */
+#app-body {
+  display: flex;
+  height: calc(100% - var(--header-height) - var(--status-height));
+}
+
+/* ========================================
+   LEFT PANEL — Controls (Civil 3D Properties style)
+   ======================================== */
+#left-panel {
+  width: var(--panel-width);
+  min-width: var(--panel-width);
+  background: var(--panel-bg);
+  border-right: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#left-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+#left-panel::-webkit-scrollbar-track {
+  background: var(--panel-bg);
+}
+
+#left-panel::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 3px;
+}
+
+/* Panel sections */
+.panel-section {
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.panel-section-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--panel-header);
+  cursor: pointer;
+  user-select: none;
+  gap: 8px;
+}
+
+.panel-section-header:hover {
+  background: #333333;
+}
+
+.panel-section-header .collapse-icon {
+  font-size: 10px;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+  width: 12px;
+}
+
+.panel-section-header.collapsed .collapse-icon {
+  transform: rotate(-90deg);
+}
+
+.panel-section-header h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-label);
+}
+
+.panel-section-body {
+  padding: 12px 14px;
+}
+
+.panel-section-header.collapsed + .panel-section-body {
+  display: none;
+}
+
+/* Form elements */
+label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+input[type="number"],
+input[type="text"],
+select {
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--input-focus);
+}
+
+textarea {
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+/* Buttons — styled like Civil 3D command buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+  width: 100%;
+}
+
+.btn:hover {
+  background: #3A3A3A;
+  border-color: var(--text-secondary);
+}
+
+.btn:active {
+  background: #444444;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #1A8AD8;
+}
+
+.btn-danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.btn-danger:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.btn-success {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.btn-success:hover {
+  background: var(--color-success);
+  color: #fff;
+}
+
+.btn-group {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.btn-group .btn {
+  flex: 1;
+}
+
+.form-row {
+  margin-bottom: 10px;
+}
+
+.form-row-inline {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.form-row-inline > div {
+  flex: 1;
+}
+
+/* Input method tabs — like Civil 3D tool palettes */
+.input-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  background: #161616;
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.input-tab {
+  flex: 1;
+  padding: 6px 8px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
+.input-tab:hover {
+  color: var(--text-primary);
+  background: #2A2A2A;
+}
+
+.input-tab.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.input-panel {
+  display: none;
+}
+
+.input-panel.active {
+  display: block;
+}
+
+/* Dashboard cards — ArcGIS Urban style */
+.stat-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stat-card {
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 10px;
+  text-align: center;
+}
+
+.stat-card .stat-value {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-area);
+  margin-bottom: 2px;
+}
+
+.stat-card .stat-label {
+  font-size: 9px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.stat-card.full-width {
+  grid-column: 1 / -1;
+}
+
+/* Vertex list — like Civil 3D point table */
+.vertex-list {
+  max-height: 160px;
+  overflow-y: auto;
+  background: #161616;
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  margin-top: 8px;
+}
+
+.vertex-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.vertex-list::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+}
+
+.vertex-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  border-bottom: 1px solid #222;
+  gap: 6px;
+}
+
+.vertex-item:hover {
+  background: #1E1E1E;
+}
+
+.vertex-item .v-index {
+  color: var(--text-secondary);
+  min-width: 20px;
+}
+
+.vertex-item .v-coords {
+  color: var(--color-bearing);
+  flex: 1;
+}
+
+.vertex-item .v-delete {
+  color: var(--color-danger);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-size: 13px;
+}
+
+.vertex-item:hover .v-delete {
+  opacity: 1;
+}
+
+/* JSON drop zone */
+.drop-zone {
+  border: 2px dashed var(--input-border);
+  border-radius: 6px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 8px;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: var(--color-accent);
+  background: rgba(0, 120, 212, 0.05);
+  color: var(--text-primary);
+}
+
+.drop-zone .drop-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ========================================
+   CANVAS AREA
+   ======================================== */
+#canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--canvas-bg);
+}
+
+#main-canvas {
+  display: block;
+  cursor: crosshair;
+}
+
+/* Canvas overlay info — Bentley AccuDraw style */
+#canvas-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.overlay-badge {
+  background: rgba(30, 30, 30, 0.85);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+
+/* Canvas tool hints — bottom of canvas */
+#canvas-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Snap indicator */
+.snap-indicator {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ========================================
+   STATUS BAR — Civil 3D command line style
+   ======================================== */
+#status-bar {
+  height: var(--status-height);
+  background: var(--panel-header);
+  border-top: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 20px;
+  font-size: 11px;
+}
+
+#status-bar .status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+#status-bar .status-item span.value {
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--text-primary);
+}
+
+#status-bar .status-mode {
+  margin-left: auto;
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+/* ========================================
+   NOTIFICATIONS / TOASTS
+   ======================================== */
+#toast-container {
+  position: fixed;
+  top: 60px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 4px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  backdrop-filter: blur(8px);
+  animation: slideIn 0.3s ease;
+  max-width: 320px;
+}
+
+.toast.success { border-left-color: var(--color-success); }
+.toast.warning { border-left-color: var(--color-warning); }
+.toast.error { border-left-color: var(--color-danger); }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideOut {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ========================================
+     HEADER
+     ======================================== -->
+<header id="app-header">
+  <span class="logo">GRND ZERO</span>
+  <span class="app-title">Civil Subdivision Site Planner</span>
+  <span class="phase-badge">PHASE 1</span>
+  <div class="coords-display" id="cursorCoords">X: 0.00 ft &nbsp; Y: 0.00 ft</div>
+</header>
+
+<!-- ========================================
+     MAIN BODY
+     ======================================== -->
+<div id="app-body">
+
+  <!-- LEFT PANEL -->
+  <div id="left-panel">
+
+    <!-- Project Settings -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Project Settings</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="form-row">
+          <label>Project Name</label>
+          <input type="text" id="projectName" value="Untitled Subdivision" />
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Scale (1px = ? ft)</label>
+            <input type="number" id="scaleInput" value="2" min="0.5" max="20" step="0.5" />
+          </div>
+          <div>
+            <label>Grid Spacing (ft)</label>
+            <input type="number" id="gridSpacing" value="50" min="10" max="500" step="10" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Snap to Grid</label>
+          <select id="snapMode">
+            <option value="none">Off</option>
+            <option value="grid">Grid Snap</option>
+            <option value="vertex">Vertex Snap</option>
+            <option value="both" selected>Grid + Vertex</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Boundary Input -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Boundary Input</h3>
+      </div>
+      <div class="panel-section-body">
+        <!-- Input method tabs -->
+        <div class="input-tabs">
+          <div class="input-tab active" onclick="switchInputTab('draw', this)">Draw</div>
+          <div class="input-tab" onclick="switchInputTab('coords', this)">Coords</div>
+          <div class="input-tab" onclick="switchInputTab('json', this)">JSON</div>
+        </div>
+
+        <!-- Tab 1: Click-to-Draw -->
+        <div class="input-panel active" id="panel-draw">
+          <p style="font-size:11px; color:var(--text-secondary); margin-bottom:10px; line-height:1.5;">
+            Click on canvas to place vertices.<br>
+            <strong style="color:var(--text-label)">Double-click</strong> to close polygon.
+          </p>
+          <button class="btn btn-primary" id="btnStartDraw" onclick="startDrawing()">Start Drawing</button>
+          <button class="btn" id="btnUndoVertex" onclick="undoLastVertex()" style="margin-top:6px; display:none;">Undo Last Vertex</button>
+        </div>
+
+        <!-- Tab 2: Coordinate Paste -->
+        <div class="input-panel" id="panel-coords">
+          <p style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; line-height:1.5;">
+            Paste X,Y pairs (comma or tab delimited).<br>
+            One pair per line. Civil 3D AutoLISP compatible.
+          </p>
+          <div class="form-row">
+            <label>Coordinate Data</label>
+            <textarea id="coordInput" rows="8" placeholder="100, 200&#10;300, 200&#10;300, 500&#10;100, 500"></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="plotFromCoords()">Plot Boundary</button>
+        </div>
+
+        <!-- Tab 3: JSON Import -->
+        <div class="input-panel" id="panel-json">
+          <p style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; line-height:1.5;">
+            Drag & drop a <strong style="color:var(--text-label)">.json</strong> file with boundary array.
+          </p>
+          <div class="drop-zone" id="dropZone">
+            <span class="drop-icon">&#128194;</span>
+            Drop .json file here<br>
+            <span style="font-size:10px; color:var(--text-secondary);">Format: [{x, y}, ...]</span>
+          </div>
+        </div>
+
+        <!-- Clear button -->
+        <div style="margin-top: 12px;">
+          <button class="btn btn-danger" onclick="clearAll()">Clear &amp; Redraw</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Boundary Info — ArcGIS Urban dashboard style -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Boundary Info</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-value" id="statArea">--</div>
+            <div class="stat-label">Acreage</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="statSqFt">--</div>
+            <div class="stat-label">Sq Feet</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="statPerimeter">--</div>
+            <div class="stat-label">Perimeter (ft)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="statVertices">0</div>
+            <div class="stat-label">Vertices</div>
+          </div>
+        </div>
+
+        <!-- Vertex table -->
+        <div class="vertex-list" id="vertexList">
+          <div style="padding:12px; text-align:center; color:var(--text-secondary); font-size:11px;">
+            No vertices defined
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- View Controls -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>View Controls</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="btn-group">
+          <button class="btn" onclick="zoomToFit()">Zoom to Fit</button>
+          <button class="btn" onclick="resetView()">Reset View</button>
+        </div>
+        <div class="form-row" style="margin-top:10px;">
+          <label>Zoom Level</label>
+          <input type="range" id="zoomSlider" min="0.1" max="5" step="0.1" value="1"
+                 style="width:100%;" oninput="setZoom(this.value)" />
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showGrid" checked onchange="render()" /> Show Grid
+          </label>
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showLabels" checked onchange="render()" /> Show Dimensions
+          </label>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /left-panel -->
+
+  <!-- CANVAS -->
+  <div id="canvas-container">
+    <canvas id="main-canvas"></canvas>
+
+    <!-- Overlay badges -->
+    <div id="canvas-overlay">
+      <div class="overlay-badge" id="overlayScale">Scale: 1px = 2.00 ft</div>
+      <div class="overlay-badge" id="overlayZoom">Zoom: 100%</div>
+    </div>
+
+    <!-- Hint bar -->
+    <div id="canvas-hint" id="canvasHint">Click "Start Drawing" or paste coordinates to begin</div>
+  </div>
+
+</div><!-- /app-body -->
+
+<!-- STATUS BAR -->
+<div id="status-bar">
+  <div class="status-item">Mode: <span class="value" id="statusMode">Idle</span></div>
+  <div class="status-item">Vertices: <span class="value" id="statusVerts">0</span></div>
+  <div class="status-item">Grid: <span class="value" id="statusGrid">50 ft</span></div>
+  <div class="status-item">Snap: <span class="value" id="statusSnap">Grid + Vertex</span></div>
+  <div class="status-mode" id="statusMsg">Ready</div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<!-- ========================================
+     JAVASCRIPT — Phase 1 Engine
+     ======================================== -->
+<script>
+// ============================================
+// STATE
+// ============================================
+const state = {
+  vertices: [],
+  isClosed: false,
+  isDrawing: false,
+  scale: 2,
+  gridSpacing: 50,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+  isPanning: false,
+  panStartX: 0,
+  panStartY: 0,
+  mouseX: 0,
+  mouseY: 0
+};
+
+// ============================================
+// CANVAS SETUP
+// ============================================
+const canvas = document.getElementById('main-canvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resizeCanvas() {
+  const container = document.getElementById('canvas-container');
+  W = container.clientWidth;
+  H = container.clientHeight;
+  canvas.width = W;
+  canvas.height = H;
+  render();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ============================================
+// COORDINATE TRANSFORMS (Y-up engineering)
+// ============================================
+function worldToScreen(wx, wy) {
+  const sx = (wx / state.scale) * state.zoom + state.panX + W / 2;
+  const sy = -(wy / state.scale) * state.zoom + state.panY + H / 2;
+  return [sx, sy];
+}
+
+function screenToWorld(sx, sy) {
+  const wx = ((sx - state.panX - W / 2) / state.zoom) * state.scale;
+  const wy = -((sy - state.panY - H / 2) / state.zoom) * state.scale;
+  return [wx, wy];
+}
+
+function snapToGrid(wx, wy) {
+  const mode = document.getElementById('snapMode').value;
+  if (mode === 'none') return [wx, wy];
+  const gs = state.gridSpacing;
+  if (mode === 'grid' || mode === 'both') {
+    wx = Math.round(wx / gs) * gs;
+    wy = Math.round(wy / gs) * gs;
+  }
+  if ((mode === 'vertex' || mode === 'both') && state.vertices.length > 0) {
+    const threshold = 10 * state.scale / state.zoom;
+    for (const v of state.vertices) {
+      if (Math.abs(wx - v.x) < threshold && Math.abs(wy - v.y) < threshold) {
+        return [v.x, v.y];
+      }
+    }
+  }
+  return [wx, wy];
+}
+
+// ============================================
+// GRID RENDERING
+// ============================================
+function drawGrid() {
+  if (!document.getElementById('showGrid').checked) return;
+  const gs = state.gridSpacing;
+  const [tlX, tlY] = screenToWorld(0, 0);
+  const [brX, brY] = screenToWorld(W, H);
+  const minX = Math.floor(Math.min(tlX, brX) / gs) * gs;
+  const maxX = Math.ceil(Math.max(tlX, brX) / gs) * gs;
+  const minY = Math.floor(Math.min(tlY, brY) / gs) * gs;
+  const maxY = Math.ceil(Math.max(tlY, brY) / gs) * gs;
+
+  ctx.strokeStyle = '#2A2A4A';
+  ctx.lineWidth = 0.5;
+  for (let x = minX; x <= maxX; x += gs) {
+    const [sx] = worldToScreen(x, 0);
+    ctx.beginPath();
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx, H);
+    ctx.stroke();
+  }
+  for (let y = minY; y <= maxY; y += gs) {
+    const [, sy] = worldToScreen(0, y);
+    ctx.beginPath();
+    ctx.moveTo(0, sy);
+    ctx.lineTo(W, sy);
+    ctx.stroke();
+  }
+
+  // Major grid every 5 intervals
+  ctx.strokeStyle = '#333355';
+  ctx.lineWidth = 1;
+  const majorGs = gs * 5;
+  for (let x = Math.floor(minX / majorGs) * majorGs; x <= maxX; x += majorGs) {
+    const [sx] = worldToScreen(x, 0);
+    ctx.beginPath();
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx, H);
+    ctx.stroke();
+  }
+  for (let y = Math.floor(minY / majorGs) * majorGs; y <= maxY; y += majorGs) {
+    const [, sy] = worldToScreen(0, y);
+    ctx.beginPath();
+    ctx.moveTo(0, sy);
+    ctx.lineTo(W, sy);
+    ctx.stroke();
+  }
+
+  // Origin axes
+  const [ox, oy] = worldToScreen(0, 0);
+  ctx.strokeStyle = 'rgba(255,100,100,0.3)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H); ctx.stroke();
+  ctx.strokeStyle = 'rgba(100,255,100,0.3)';
+  ctx.beginPath(); ctx.moveTo(0, oy); ctx.lineTo(W, oy); ctx.stroke();
+}
+
+// ============================================
+// POLYGON RENDERING
+// ============================================
+function drawBoundary() {
+  const verts = state.vertices;
+  if (verts.length === 0) return;
+
+  // Fill if closed
+  if (state.isClosed && verts.length > 2) {
+    ctx.beginPath();
+    const [fx, fy] = worldToScreen(verts[0].x, verts[0].y);
+    ctx.moveTo(fx, fy);
+    for (let i = 1; i < verts.length; i++) {
+      const [sx, sy] = worldToScreen(verts[i].x, verts[i].y);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(69, 183, 209, 0.08)';
+    ctx.fill();
+  }
+
+  // Edges
+  ctx.strokeStyle = state.isClosed ? '#FFD93D' : '#E8E8E8';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const [sx0, sy0] = worldToScreen(verts[0].x, verts[0].y);
+  ctx.moveTo(sx0, sy0);
+  for (let i = 1; i < verts.length; i++) {
+    const [sx, sy] = worldToScreen(verts[i].x, verts[i].y);
+    ctx.lineTo(sx, sy);
+  }
+  if (state.isClosed) ctx.closePath();
+  ctx.stroke();
+
+  // Rubber band line while drawing
+  if (state.isDrawing && !state.isClosed && verts.length > 0) {
+    const last = verts[verts.length - 1];
+    const [lsx, lsy] = worldToScreen(last.x, last.y);
+    const [msx, msy] = worldToScreen(state.mouseX, state.mouseY);
+    ctx.strokeStyle = 'rgba(232,232,232,0.4)';
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(lsx, lsy);
+    ctx.lineTo(msx, msy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Vertices
+  for (let i = 0; i < verts.length; i++) {
+    const [sx, sy] = worldToScreen(verts[i].x, verts[i].y);
+    // Outer ring
+    ctx.beginPath();
+    ctx.arc(sx, sy, 6, 0, Math.PI * 2);
+    ctx.fillStyle = i === 0 ? '#4CAF50' : '#FF6B6B';
+    ctx.fill();
+    // Inner dot
+    ctx.beginPath();
+    ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  }
+
+  // Edge labels (distance)
+  if (document.getElementById('showLabels').checked && verts.length > 1) {
+    const edges = state.isClosed ? verts.length : verts.length - 1;
+    for (let i = 0; i < edges; i++) {
+      const a = verts[i];
+      const b = verts[(i + 1) % verts.length];
+      const dist = Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
+      const [ax, ay] = worldToScreen(a.x, a.y);
+      const [bx, by] = worldToScreen(b.x, b.y);
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2;
+      ctx.font = '11px Consolas, monospace';
+      ctx.fillStyle = '#FF6B6B';
+      ctx.textAlign = 'center';
+      ctx.fillText(dist.toFixed(1) + ' ft', mx, my - 8);
+    }
+  }
+}
+
+// ============================================
+// MAIN RENDER
+// ============================================
+function render() {
+  ctx.clearRect(0, 0, W, H);
+  drawGrid();
+  drawBoundary();
+}
+
+// ============================================
+// SHOELACE FORMULA
+// ============================================
+function calcArea(verts) {
+  let area = 0;
+  const n = verts.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += verts[i].x * verts[j].y;
+    area -= verts[j].x * verts[i].y;
+  }
+  return Math.abs(area) / 2;
+}
+
+function calcPerimeter(verts) {
+  let p = 0;
+  for (let i = 0; i < verts.length; i++) {
+    const j = (i + 1) % verts.length;
+    p += Math.sqrt((verts[j].x - verts[i].x) ** 2 + (verts[j].y - verts[i].y) ** 2);
+  }
+  return p;
+}
+
+function updateStats() {
+  const v = state.vertices;
+  document.getElementById('statVertices').textContent = v.length;
+  document.getElementById('statusVerts').textContent = v.length;
+  if (state.isClosed && v.length > 2) {
+    const areaSqFt = calcArea(v);
+    const acres = areaSqFt / 43560;
+    const perim = calcPerimeter(v);
+    document.getElementById('statArea').textContent = acres.toFixed(3);
+    document.getElementById('statSqFt').textContent = areaSqFt.toLocaleString('en-US', {maximumFractionDigits: 0});
+    document.getElementById('statPerimeter').textContent = perim.toFixed(1);
+  } else {
+    document.getElementById('statArea').textContent = '--';
+    document.getElementById('statSqFt').textContent = '--';
+    document.getElementById('statPerimeter').textContent = '--';
+  }
+  updateVertexList();
+}
+
+function updateVertexList() {
+  const list = document.getElementById('vertexList');
+  if (state.vertices.length === 0) {
+    list.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-secondary);font-size:11px;">No vertices defined</div>';
+    return;
+  }
+  list.innerHTML = state.vertices.map((v, i) =>
+    '<div class="vertex-item">' +
+    '<span class="v-index">' + (i + 1) + '</span>' +
+    '<span class="v-coords">' + v.x.toFixed(2) + ', ' + v.y.toFixed(2) + '</span>' +
+    '<span class="v-delete" onclick="deleteVertex(' + i + ')">&#10005;</span>' +
+    '</div>'
+  ).join('');
+}
+
+// ============================================
+// DRAWING MODE
+// ============================================
+function startDrawing() {
+  if (state.isClosed) clearAll();
+  state.isDrawing = true;
+  state.isClosed = false;
+  document.getElementById('btnStartDraw').textContent = 'Drawing...';
+  document.getElementById('btnStartDraw').disabled = true;
+  document.getElementById('btnUndoVertex').style.display = 'block';
+  document.getElementById('statusMode').textContent = 'Drawing';
+  document.getElementById('canvas-hint').textContent = 'Click to place vertices — Double-click to close polygon';
+  showToast('Click on canvas to place boundary vertices', 'info');
+  render();
+}
+
+function closePolygon() {
+  if (state.vertices.length < 3) {
+    showToast('Need at least 3 vertices to close polygon', 'warning');
+    return;
+  }
+  state.isClosed = true;
+  state.isDrawing = false;
+  document.getElementById('btnStartDraw').textContent = 'Start Drawing';
+  document.getElementById('btnStartDraw').disabled = false;
+  document.getElementById('btnUndoVertex').style.display = 'none';
+  document.getElementById('statusMode').textContent = 'Idle';
+  document.getElementById('canvas-hint').textContent = 'Boundary closed — ' + state.vertices.length + ' vertices';
+  document.getElementById('statusMsg').textContent = 'Boundary defined';
+  updateStats();
+  render();
+  showToast('Boundary closed! Area: ' + document.getElementById('statArea').textContent + ' acres', 'success');
+}
+
+function undoLastVertex() {
+  if (state.vertices.length > 0) {
+    state.vertices.pop();
+    updateStats();
+    render();
+  }
+  if (state.vertices.length === 0) {
+    document.getElementById('btnUndoVertex').style.display = 'none';
+  }
+}
+
+function deleteVertex(idx) {
+  state.vertices.splice(idx, 1);
+  if (state.vertices.length < 3) state.isClosed = false;
+  updateStats();
+  render();
+}
+
+function clearAll() {
+  state.vertices = [];
+  state.isClosed = false;
+  state.isDrawing = false;
+  document.getElementById('btnStartDraw').textContent = 'Start Drawing';
+  document.getElementById('btnStartDraw').disabled = false;
+  document.getElementById('btnUndoVertex').style.display = 'none';
+  document.getElementById('statusMode').textContent = 'Idle';
+  document.getElementById('statusMsg').textContent = 'Ready';
+  document.getElementById('canvas-hint').textContent = 'Click "Start Drawing" or paste coordinates to begin';
+  updateStats();
+  render();
+  showToast('Canvas cleared', 'info');
+}
+
+// ============================================
+// COORDINATE PASTE INPUT
+// ============================================
+function plotFromCoords() {
+  const raw = document.getElementById('coordInput').value.trim();
+  if (!raw) { showToast('No coordinates entered', 'warning'); return; }
+  const lines = raw.split('\n').filter(l => l.trim());
+  const verts = [];
+  for (const line of lines) {
+    const parts = line.trim().split(/[,\t\s]+/).map(Number);
+    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      verts.push({ x: parts[0], y: parts[1] });
+    }
+  }
+  if (verts.length < 3) {
+    showToast('Need at least 3 valid coordinate pairs', 'warning');
+    return;
+  }
+  state.vertices = verts;
+  state.isClosed = true;
+  state.isDrawing = false;
+  document.getElementById('statusMode').textContent = 'Idle';
+  document.getElementById('statusMsg').textContent = 'Boundary defined';
+  document.getElementById('canvas-hint').textContent = 'Boundary plotted — ' + verts.length + ' vertices';
+  updateStats();
+  zoomToFit();
+  showToast('Plotted ' + verts.length + ' vertices from coordinates', 'success');
+}
+
+// ============================================
+// JSON IMPORT (drag-drop)
+// ============================================
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (!file || !file.name.endsWith('.json')) {
+    showToast('Please drop a .json file', 'warning');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      const arr = Array.isArray(data) ? data : data.boundary || data.vertices || data.points;
+      if (!Array.isArray(arr) || arr.length < 3) {
+        showToast('JSON must contain array of 3+ {x,y} objects', 'warning');
+        return;
+      }
+      state.vertices = arr.map(p => ({ x: Number(p.x), y: Number(p.y) }));
+      state.isClosed = true;
+      state.isDrawing = false;
+      document.getElementById('statusMode').textContent = 'Idle';
+      document.getElementById('statusMsg').textContent = 'Boundary defined';
+      document.getElementById('canvas-hint').textContent = 'Boundary imported — ' + state.vertices.length + ' vertices';
+      updateStats();
+      zoomToFit();
+      showToast('Imported ' + state.vertices.length + ' vertices from ' + file.name, 'success');
+    } catch (err) {
+      showToast('Invalid JSON: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+});
+
+// ============================================
+// MOUSE EVENTS
+// ============================================
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  let [wx, wy] = screenToWorld(sx, sy);
+
+  if (state.isDrawing) {
+    [wx, wy] = snapToGrid(wx, wy);
+  }
+  state.mouseX = wx;
+  state.mouseY = wy;
+
+  document.getElementById('cursorCoords').textContent =
+    'X: ' + wx.toFixed(2) + ' ft   Y: ' + wy.toFixed(2) + ' ft';
+
+  // Panning
+  if (state.isPanning) {
+    state.panX += e.movementX;
+    state.panY += e.movementY;
+  }
+  render();
+});
+
+canvas.addEventListener('click', e => {
+  if (!state.isDrawing || state.isClosed) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  let [wx, wy] = screenToWorld(sx, sy);
+  [wx, wy] = snapToGrid(wx, wy);
+  state.vertices.push({ x: wx, y: wy });
+  document.getElementById('btnUndoVertex').style.display = 'block';
+  updateStats();
+  render();
+});
+
+canvas.addEventListener('dblclick', e => {
+  if (!state.isDrawing) return;
+  e.preventDefault();
+  // Remove the extra vertex added by the second click of dblclick
+  if (state.vertices.length > 3) {
+    state.vertices.pop();
+  }
+  closePolygon();
+});
+
+// Pan with middle mouse or right-click drag
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 1 || e.button === 2) {
+    e.preventDefault();
+    state.isPanning = true;
+    canvas.style.cursor = 'grabbing';
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (e.button === 1 || e.button === 2) {
+    state.isPanning = false;
+    canvas.style.cursor = 'crosshair';
+  }
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Zoom with scroll wheel
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  state.zoom = Math.max(0.1, Math.min(10, state.zoom * delta));
+  document.getElementById('zoomSlider').value = state.zoom;
+  document.getElementById('overlayZoom').textContent = 'Zoom: ' + Math.round(state.zoom * 100) + '%';
+  render();
+});
+
+// ============================================
+// VIEW CONTROLS
+// ============================================
+function setZoom(val) {
+  state.zoom = parseFloat(val);
+  document.getElementById('overlayZoom').textContent = 'Zoom: ' + Math.round(state.zoom * 100) + '%';
+  render();
+}
+
+function resetView() {
+  state.zoom = 1;
+  state.panX = 0;
+  state.panY = 0;
+  document.getElementById('zoomSlider').value = 1;
+  document.getElementById('overlayZoom').textContent = 'Zoom: 100%';
+  render();
+}
+
+function zoomToFit() {
+  if (state.vertices.length === 0) return;
+  const xs = state.vertices.map(v => v.x);
+  const ys = state.vertices.map(v => v.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const rangeX = (maxX - minX) / state.scale;
+  const rangeY = (maxY - minY) / state.scale;
+  const pad = 1.2;
+  state.zoom = Math.min(W / (rangeX * pad), H / (rangeY * pad));
+  state.zoom = Math.max(0.1, Math.min(10, state.zoom));
+  state.panX = -(cx / state.scale) * state.zoom;
+  state.panY = (cy / state.scale) * state.zoom;
+  document.getElementById('zoomSlider').value = state.zoom;
+  document.getElementById('overlayZoom').textContent = 'Zoom: ' + Math.round(state.zoom * 100) + '%';
+  render();
+}
+
+// ============================================
+// SETTINGS LISTENERS
+// ============================================
+document.getElementById('scaleInput').addEventListener('change', e => {
+  state.scale = parseFloat(e.target.value) || 2;
+  document.getElementById('overlayScale').textContent = 'Scale: 1px = ' + state.scale.toFixed(2) + ' ft';
+  render();
+});
+
+document.getElementById('gridSpacing').addEventListener('change', e => {
+  state.gridSpacing = parseInt(e.target.value) || 50;
+  document.getElementById('statusGrid').textContent = state.gridSpacing + ' ft';
+  render();
+});
+
+document.getElementById('snapMode').addEventListener('change', e => {
+  const labels = { none: 'Off', grid: 'Grid', vertex: 'Vertex', both: 'Grid + Vertex' };
+  document.getElementById('statusSnap').textContent = labels[e.target.value] || 'Off';
+});
+
+// ============================================
+// UI HELPERS
+// ============================================
+function toggleSection(header) {
+  header.classList.toggle('collapsed');
+}
+
+function switchInputTab(name, tabEl) {
+  document.querySelectorAll('.input-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.input-panel').forEach(p => p.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+function showToast(msg, type) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + (type || '');
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'slideOut 0.3s ease forwards';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// ============================================
+// INIT
+// ============================================
+resizeCanvas();
+</script>
+
+</body>
+</html>
