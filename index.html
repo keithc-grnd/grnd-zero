@@ -972,11 +972,11 @@ input[type="range"]::-moz-range-thumb {
         <div class="form-row-inline">
           <div>
             <label>ROW Width (ft)</label>
-            <input type="number" id="rowWidth" value="60" min="20" max="120" step="2" onchange="onDesignParamChange()" />
+            <input type="number" id="rowWidth" value="37" min="20" max="120" step="0.5" onchange="onDesignParamChange()" />
           </div>
           <div>
             <label>Roadway Width (ft)</label>
-            <input type="number" id="roadwayWidth" value="40" min="20" max="80" step="2" onchange="onDesignParamChange()" />
+            <input type="number" id="roadwayWidth" value="36" min="20" max="80" step="0.5" onchange="onDesignParamChange()" />
           </div>
         </div>
         <div class="form-row">
@@ -1018,17 +1018,50 @@ input[type="range"]::-moz-range-thumb {
 
         <hr class="param-divider" />
 
-        <!-- Cul-de-sac -->
-        <div class="param-group-label">Cul-de-sac</div>
+        <!-- Cul-de-sac — Riverside County Std 800/800A/801 -->
+        <div class="param-group-label">Cul-de-sac (Riverside Co. Std 800)</div>
+        <div class="form-row">
+          <label>CDS Type</label>
+          <select id="cdsType" onchange="applyCdsStandard(); onDesignParamChange();">
+            <option value="standard">Standard (Std 800)</option>
+            <option value="offset">Offset (Std 800A)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>CDS ROW Bulb Size (Schedule H)</label>
+          <select id="cdsScheduleH" onchange="applyCdsStandard(); onDesignParamChange();">
+            <option value="50">RW 50' — A=25 B=16 C=9 R1=109</option>
+            <option value="56">RW 56' — A=28 B=18 C=10 R1=110</option>
+            <option value="60" selected>RW 60' — A=30 B=20 C=10 R1=110</option>
+            <option value="66">RW 66' — A=33 B=22 C=11 R1=111</option>
+            <option value="74">RW 74' — A=37 B=22 C=15 R1=111</option>
+            <option value="78">RW 78' — A=38 B=28 C=11 R1=111</option>
+          </select>
+        </div>
         <div class="form-row-inline">
           <div>
             <label>CDS Radius (ft, ROW)</label>
-            <input type="number" id="cdsRadius" value="50" min="30" max="100" step="5" onchange="onDesignParamChange()" />
+            <input type="number" id="cdsRadius" value="30" min="20" max="100" step="1" onchange="onDesignParamChange()" />
           </div>
           <div>
-            <label>Knuckle Radius (ft)</label>
-            <input type="number" id="cdsKnuckleRadius" value="35" min="15" max="60" step="5" onchange="onDesignParamChange()" />
+            <label>Knuckle R (Std 801)</label>
+            <input type="number" id="cdsKnuckleRadius" value="35" min="15" max="60" step="1" onchange="onDesignParamChange()" />
           </div>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Throat Width (ft)</label>
+            <input type="number" id="cdsThroatWidth" value="37" min="20" max="80" step="0.5" onchange="onDesignParamChange()" />
+          </div>
+          <div>
+            <label>Throat Length D (ft)</label>
+            <input type="number" id="cdsThroatLength" value="86.63" min="30" max="200" step="0.01" onchange="onDesignParamChange()" />
+          </div>
+        </div>
+        <div class="form-row" style="font-size:10px; color:var(--text-secondary); line-height:1.5;">
+          Street: 36' curb-to-curb, 0.5' behind curb = 37' ROW<br>
+          Min fall around CDS: 1.0% (0.5% w/ approval)<br>
+          Cross slope: 2% TYP
         </div>
 
         <hr class="param-divider" />
@@ -1831,18 +1864,58 @@ document.getElementById('snapMode').addEventListener('change', e => {
 // ============================================
 // DESIGN PARAMETERS — Phase 2
 // ============================================
+// ============================================
+// RIVERSIDE COUNTY STANDARDS DATA
+// Std 800 — Cul-de-sac Schedule H
+// Std 800A — Offset Cul-de-sac
+// Std 801 — Knuckle
+// ============================================
+const RIVERSIDE_CDS_STD800 = {
+  '50': { rw: 50, A: 25, B: 16, C: 9, D: 92.11, delta1: '17°36\'01"', r1: 109, fl1L: 33.48, fl1R: 100, rw1: 30.72, delta2: '215°12\'02"', r2: 38, fl2R: 142.73, fl2L: 47, rwBulb: 176.53 },
+  '56': { rw: 56, A: 28, B: 18, C: 10, D: 89.55, delta1: '16°18\'41"', r1: 110, fl1L: 31.31, fl1R: 100, rw1: 28.47, delta2: '212°37\'22"', r2: 38, fl2R: 141.02, fl2L: 48, rwBulb: 178.12 },
+  '60': { rw: 60, A: 30, B: 20, C: 10, D: 86.63, delta1: '15°00\'38"', r1: 110, fl1L: 28.82, fl1R: 100, rw1: 26.20, delta2: '210°01\'17"', r2: 38, fl2R: 139.29, fl2L: 48, rwBulb: 175.95 },
+  '66': { rw: 66, A: 33, B: 22, C: 11, D: 83.74, delta1: '13°36\'40"', r1: 111, fl1L: 26.44, fl1R: 100, rw1: 23.82, delta2: '207°17\'21"', r2: 38, fl2R: 137.48, fl2L: 48, rwBulb: 177.26 },
+  '74': { rw: 74, A: 37, B: 22, C: 15, D: 84.50, delta1: '13°34\'05"', r1: 111, fl1L: 27.23, fl1R: 100, rw1: 23.68, delta2: '207°08\'41"', r2: 38, fl2R: 137.38, fl2L: 38, rwBulb: 191.61 },
+  '78': { rw: 78, A: 38, B: 28, C: 11, D: 95.39, delta1: '17°12\'31"', r1: 111, fl1L: 33.33, fl1R: 100, rw1: 30.03, delta2: '214°25\'02"', r2: 38, fl2R: 187.11, fl2L: 41, rwBulb: 228.26 }
+};
+
+// Street standard: 36' curb-to-curb, 0.5' behind curb each side = 37' ROW
+const STREET_DEFAULTS = {
+  curbToCurb: 36,
+  behindCurb: 0.5,
+  totalROW: 37,
+  crossSlope: 2.0, // percent
+  cdsMinFall: 1.0, // percent
+  cdsMinFallReduced: 0.5 // with approval
+};
+
+function applyCdsStandard() {
+  const schedH = document.getElementById('cdsScheduleH').value;
+  const std = RIVERSIDE_CDS_STD800[schedH];
+  if (!std) return;
+  // Set CDS bulb radius = A (half the ROW diameter of the bulb)
+  document.getElementById('cdsRadius').value = std.A;
+  // Throat length from Schedule H
+  document.getElementById('cdsThroatLength').value = std.D;
+  // Throat width matches street ROW
+  document.getElementById('cdsThroatWidth').value = STREET_DEFAULTS.totalROW;
+}
+
 function getDesignParams() {
   return {
     layoutPattern: document.getElementById('layoutPattern').value,
-    rowWidth: parseFloat(document.getElementById('rowWidth').value) || 60,
-    roadwayWidth: parseFloat(document.getElementById('roadwayWidth').value) || 40,
+    rowWidth: parseFloat(document.getElementById('rowWidth').value) || 37,
+    roadwayWidth: parseFloat(document.getElementById('roadwayWidth').value) || 36,
     streetOrientation: parseFloat(document.getElementById('streetOrientation').value) || 0,
     minLotWidth: parseFloat(document.getElementById('minLotWidth').value) || 60,
     minLotDepth: parseFloat(document.getElementById('minLotDepth').value) || 100,
     minLotArea: parseFloat(document.getElementById('minLotArea').value) || 7200,
     cornerLotBonus: parseFloat(document.getElementById('cornerLotBonus').value) || 10,
-    cdsRadius: parseFloat(document.getElementById('cdsRadius').value) || 50,
+    cdsRadius: parseFloat(document.getElementById('cdsRadius').value) || 30,
     cdsKnuckleRadius: parseFloat(document.getElementById('cdsKnuckleRadius').value) || 35,
+    cdsType: document.getElementById('cdsType').value || 'standard',
+    cdsThroatWidth: parseFloat(document.getElementById('cdsThroatWidth').value) || 37,
+    cdsThroatLength: parseFloat(document.getElementById('cdsThroatLength').value) || 86.63,
     perimeterSetback: parseFloat(document.getElementById('perimeterSetback').value) || 20
   };
 }
@@ -2577,12 +2650,17 @@ function generateCurvilinearLayout(buffer, params) {
           y: brEnd.y - brUy * params.cdsRadius
         };
         if (pointInPolygon(cdsCenter, buffer)) {
-          // Store cul-de-sac circle for rendering
+          // Store cul-de-sac for rendering (Riverside Co. Std 800)
+          // Paved radius = ROW radius minus behind-curb offset (0.5')
           state.culdesacs = state.culdesacs || [];
           state.culdesacs.push({
             center: cdsCenter,
             rowRadius: params.cdsRadius,
-            pavedRadius: params.cdsRadius - 8
+            pavedRadius: params.cdsRadius - STREET_DEFAULTS.behindCurb,
+            throatWidth: params.cdsThroatWidth,
+            throatLength: params.cdsThroatLength,
+            type: params.cdsType,
+            direction: { x: brUx, y: brUy } // throat direction
           });
 
           // Generate lots around the cul-de-sac bulb
@@ -2937,7 +3015,7 @@ function drawStreets() {
     }
   }
 
-  // Draw cul-de-sac circles
+  // Draw cul-de-sacs (Riverside County Std 800/800A)
   if (state.culdesacs) {
     for (const cds of state.culdesacs) {
       const [scx, scy] = worldToScreen(cds.center.x, cds.center.y);
@@ -2945,28 +3023,88 @@ function drawStreets() {
       const pavedR = (cds.pavedRadius / state.scale) * state.zoom;
 
       // ROW circle — white dashed
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 3]);
       ctx.beginPath();
       ctx.arc(scx, scy, rowR, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Paved circle — yellow fill
-      ctx.fillStyle = 'rgba(255, 217, 61, 0.1)';
-      ctx.strokeStyle = 'rgba(255, 217, 61, 0.5)';
-      ctx.lineWidth = 1;
+      // Paved circle (curb face) — solid
+      ctx.fillStyle = 'rgba(255, 217, 61, 0.08)';
+      ctx.strokeStyle = 'rgba(255, 217, 61, 0.6)';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(scx, scy, pavedR, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+
+      // Draw throat if direction is available
+      if (cds.direction && cds.throatLength) {
+        const dir = cds.direction;
+        const nx = -dir.y, ny = dir.x; // perpendicular to throat
+        const halfThroat = (cds.throatWidth || 37) / 2;
+        const tLen = cds.throatLength;
+
+        // Throat ROW edges (extending from bulb downward along direction)
+        const tStart = {
+          x: cds.center.x - dir.x * cds.rowRadius,
+          y: cds.center.y - dir.y * cds.rowRadius
+        };
+        const tEnd = {
+          x: tStart.x - dir.x * tLen,
+          y: tStart.y - dir.y * tLen
+        };
+
+        // Left and right ROW edges of throat
+        for (const side of [1, -1]) {
+          const [sx1, sy1] = worldToScreen(
+            tStart.x + nx * halfThroat * side,
+            tStart.y + ny * halfThroat * side
+          );
+          const [sx2, sy2] = worldToScreen(
+            tEnd.x + nx * halfThroat * side,
+            tEnd.y + ny * halfThroat * side
+          );
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([6, 3]);
+          ctx.beginPath();
+          ctx.moveTo(sx1, sy1);
+          ctx.lineTo(sx2, sy2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Throat centerline
+        const [tcx1, tcy1] = worldToScreen(tStart.x, tStart.y);
+        const [tcx2, tcy2] = worldToScreen(tEnd.x, tEnd.y);
+        ctx.strokeStyle = 'rgba(255, 217, 61, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(tcx1, tcy1);
+        ctx.lineTo(tcx2, tcy2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
 
       // Center dot
       ctx.fillStyle = 'rgba(255, 217, 61, 0.7)';
       ctx.beginPath();
       ctx.arc(scx, scy, 3, 0, Math.PI * 2);
       ctx.fill();
+
+      // Label
+      if (state.zoom > 0.4) {
+        ctx.font = '9px Consolas, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.fillText('R=' + cds.rowRadius + '\' ROW', scx, scy + rowR + 14);
+        const typeLabel = cds.type === 'offset' ? 'Std 800A' : 'Std 800';
+        ctx.fillText(typeLabel, scx, scy + rowR + 25);
+      }
     }
   }
 }
@@ -3339,6 +3477,20 @@ function exportDXF() {
     const [a, b] = st.centerline;
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     dxf += dxfText(mx, my, st._name, 'STREET-NAMES', 5);
+  }
+
+  // Cul-de-sac circles
+  if (state.culdesacs) {
+    for (const cds of state.culdesacs) {
+      // ROW circle
+      dxf += '0\nCIRCLE\n8\nROW\n';
+      dxf += '10\n' + cds.center.x.toFixed(4) + '\n20\n' + cds.center.y.toFixed(4) + '\n30\n0.0\n';
+      dxf += '40\n' + cds.rowRadius.toFixed(4) + '\n';
+      // Paved circle
+      dxf += '0\nCIRCLE\n8\nSTREET-CL\n';
+      dxf += '10\n' + cds.center.x.toFixed(4) + '\n20\n' + cds.center.y.toFixed(4) + '\n30\n0.0\n';
+      dxf += '40\n' + cds.pavedRadius.toFixed(4) + '\n';
+    }
   }
 
   dxf += '0\nENDSEC\n';
