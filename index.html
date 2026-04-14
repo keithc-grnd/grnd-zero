@@ -1992,6 +1992,7 @@ state.bufferedBoundary = [];
 state.blocks = [];
 state.curvedStreets = [];
 state.culdesacs = [];
+state.knuckles = [];
 
 // -- Polygon offset (inward shrink) via edge normal offset --
 function offsetPolygon(verts, dist) {
@@ -2143,6 +2144,148 @@ function cross2d(a, b, p) {
 }
 
 // ============================================
+// DESIGN CONSTRAINTS
+// ============================================
+
+// Rule: Entry streets must be perpendicular to the boundary edge they connect to.
+// Finds the best boundary edge, computes its inward normal, and creates an entry
+// street along that normal from the boundary midpoint to the nearest interior target.
+function findPerpendicularEntry(boundaryVerts, interiorTargets, halfROW) {
+  let bestScore = Infinity;
+  let bestEntry = null;
+
+  for (let i = 0; i < boundaryVerts.length; i++) {
+    const j = (i + 1) % boundaryVerts.length;
+    const edgeA = boundaryVerts[i], edgeB = boundaryVerts[j];
+    const edgeMx = (edgeA.x + edgeB.x) / 2;
+    const edgeMy = (edgeA.y + edgeB.y) / 2;
+
+    // Edge direction and inward normal
+    const edx = edgeB.x - edgeA.x, edy = edgeB.y - edgeA.y;
+    const eLen = Math.sqrt(edx * edx + edy * edy) || 1;
+    const eux = edx / eLen, euy = edy / eLen;
+    // Inward normal (try both, pick the one pointing toward centroid)
+    let nx = -euy, ny = eux;
+    const cx = boundaryVerts.reduce((s, v) => s + v.x, 0) / boundaryVerts.length;
+    const cy = boundaryVerts.reduce((s, v) => s + v.y, 0) / boundaryVerts.length;
+    const toCx = cx - edgeMx, toCy = cy - edgeMy;
+    if (nx * toCx + ny * toCy < 0) { nx = -nx; ny = -ny; }
+
+    // Find closest interior target along this normal direction
+    for (const target of interiorTargets) {
+      const toTx = target.x - edgeMx, toTy = target.y - edgeMy;
+      const proj = toTx * nx + toTy * ny; // projection along normal
+      if (proj < 10) continue; // must be inward
+      const perp = Math.abs(toTx * eux + toTy * euy); // lateral offset
+      const score = perp + proj * 0.1; // prefer small lateral offset
+
+      if (score < bestScore) {
+        bestScore = score;
+        // Project target onto the normal line from edge midpoint
+        const entryEnd = {
+          x: edgeMx + nx * proj,
+          y: edgeMy + ny * proj
+        };
+        const streetNx = -ny, streetNy = nx; // perpendicular to entry street
+        // Wait — the street direction IS the normal, so perpendicular to street is the edge direction
+        const sNx = eux, sNy = euy;
+
+        bestEntry = {
+          boundaryPoint: { x: edgeMx, y: edgeMy },
+          interiorPoint: entryEnd,
+          normal: { x: nx, y: ny },
+          street: {
+            centerline: [{ x: edgeMx, y: edgeMy }, entryEnd],
+            rowLeft: [
+              { x: edgeMx + sNx * halfROW, y: edgeMy + sNy * halfROW },
+              { x: entryEnd.x + sNx * halfROW, y: entryEnd.y + sNy * halfROW }
+            ],
+            rowRight: [
+              { x: edgeMx - sNx * halfROW, y: edgeMy - sNy * halfROW },
+              { x: entryEnd.x - sNx * halfROW, y: entryEnd.y - sNy * halfROW }
+            ],
+            isPrimary: false,
+            _name: 'Entry'
+          }
+        };
+      }
+    }
+  }
+  return bestEntry;
+}
+
+// Rule: Knuckles required when street intersection angle < 120°.
+// Returns angle in degrees between two street segments sharing an endpoint.
+function streetIntersectionAngle(streetA, streetB) {
+  // Get direction vectors at the intersection point
+  const [a1, a2] = streetA.centerline;
+  const [b1, b2] = streetB.centerline;
+
+  // Find which endpoints are close (the intersection)
+  const pairs = [
+    [a2, b1, a1, b2], [a2, b2, a1, b1],
+    [a1, b1, a2, b2], [a1, b2, a2, b1]
+  ];
+
+  for (const [pa, pb, otherA, otherB] of pairs) {
+    if (Math.hypot(pa.x - pb.x, pa.y - pb.y) < 1) {
+      // Intersection found at pa/pb
+      const dAx = otherA.x - pa.x, dAy = otherA.y - pa.y;
+      const dBx = otherB.x - pb.x, dBy = otherB.y - pb.y;
+      const dot = dAx * dBx + dAy * dBy;
+      const magA = Math.sqrt(dAx * dAx + dAy * dAy) || 1;
+      const magB = Math.sqrt(dBx * dBx + dBy * dBy) || 1;
+      const cosAngle = Math.max(-1, Math.min(1, dot / (magA * magB)));
+      return Math.acos(cosAngle) * 180 / Math.PI;
+    }
+  }
+  return 180; // no intersection found, assume straight
+}
+
+// Detect intersections needing knuckles and store them for rendering
+function detectKnuckles(streets, knuckleRadius) {
+  const knuckles = [];
+  const threshold = 5; // proximity threshold for intersection detection
+
+  for (let i = 0; i < streets.length; i++) {
+    for (let j = i + 1; j < streets.length; j++) {
+      const si = streets[i], sj = streets[j];
+      // Check all endpoint combinations
+      const endpoints = [
+        [si.centerline[0], si.centerline[1], sj.centerline[0], sj.centerline[1]],
+        [si.centerline[0], si.centerline[1], sj.centerline[1], sj.centerline[0]],
+        [si.centerline[1], si.centerline[0], sj.centerline[0], sj.centerline[1]],
+        [si.centerline[1], si.centerline[0], sj.centerline[1], sj.centerline[0]]
+      ];
+
+      for (const [nearA, farA, nearB, farB] of endpoints) {
+        if (Math.hypot(nearA.x - nearB.x, nearA.y - nearB.y) > threshold) continue;
+
+        const dAx = farA.x - nearA.x, dAy = farA.y - nearA.y;
+        const dBx = farB.x - nearB.x, dBy = farB.y - nearB.y;
+        const magA = Math.sqrt(dAx * dAx + dAy * dAy) || 1;
+        const magB = Math.sqrt(dBx * dBx + dBy * dBy) || 1;
+        const dot = dAx * dBx + dAy * dBy;
+        const cosAngle = Math.max(-1, Math.min(1, dot / (magA * magB)));
+        const angle = Math.acos(cosAngle) * 180 / Math.PI;
+
+        if (angle < 120) {
+          knuckles.push({
+            center: { x: (nearA.x + nearB.x) / 2, y: (nearA.y + nearB.y) / 2 },
+            radius: knuckleRadius,
+            angle: angle,
+            dirA: { x: dAx / magA, y: dAy / magA },
+            dirB: { x: dBx / magB, y: dBy / magB }
+          });
+        }
+        break; // found intersection for this pair
+      }
+    }
+  }
+  return knuckles;
+}
+
+// ============================================
 // PHASE 3 — GRID STREET LAYOUT ENGINE
 // ============================================
 
@@ -2178,9 +2321,16 @@ function generateLayout() {
     return;
   }
 
+  // Detect knuckles at intersections < 120° (Riverside Co. Std 801)
+  state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
+
   updateYieldSummary(params);
   render();
-  showToast('Layout generated: ' + state.lots.length + ' lots', 'success');
+
+  const knuckleMsg = state.knuckles.length > 0
+    ? ', ' + state.knuckles.length + ' knuckle(s)'
+    : '';
+  showToast('Layout generated: ' + state.lots.length + ' lots' + knuckleMsg, 'success');
 }
 
 // ============================================
@@ -2526,6 +2676,12 @@ function generateCurvilinearLayout(buffer, params) {
     });
   }
 
+  // Add perpendicular entry from boundary to spine start
+  const entryToCurve = findPerpendicularEntry(state.vertices, [spineP0], halfROW);
+  if (entryToCurve) {
+    state.streets.push(entryToCurve.street);
+  }
+
   // 3. Generate branch streets perpendicular to spine, spaced at block-depth intervals
   const blockDepth = 2 * params.minLotDepth + params.rowWidth;
   const spineLen = spinePoints.reduce((sum, p, i) => {
@@ -2766,40 +2922,10 @@ function generateCulDeSacLoopLayout(buffer, params) {
     });
   }
 
-  // 2. Find entry point — closest boundary edge to a loop point
-  let bestDist = Infinity, entryBoundary = null, entryLoop = null;
-  for (let i = 0; i < state.vertices.length; i++) {
-    const j = (i + 1) % state.vertices.length;
-    const mx = (state.vertices[i].x + state.vertices[j].x) / 2;
-    const my = (state.vertices[i].y + state.vertices[j].y) / 2;
-    for (const lp of loopPath) {
-      const d = Math.hypot(lp.x - mx, lp.y - my);
-      if (d < bestDist) {
-        bestDist = d;
-        entryBoundary = { x: mx, y: my };
-        entryLoop = lp;
-      }
-    }
-  }
-
-  // Entry street from boundary to loop
-  if (entryBoundary && entryLoop) {
-    const dx = entryLoop.x - entryBoundary.x;
-    const dy = entryLoop.y - entryBoundary.y;
-    const len = Math.sqrt(dx*dx + dy*dy) || 1;
-    const nx = -dy/len, ny = dx/len;
-    state.streets.push({
-      centerline: [entryBoundary, entryLoop],
-      rowLeft: [
-        { x: entryBoundary.x + nx * halfROW, y: entryBoundary.y + ny * halfROW },
-        { x: entryLoop.x + nx * halfROW, y: entryLoop.y + ny * halfROW }
-      ],
-      rowRight: [
-        { x: entryBoundary.x - nx * halfROW, y: entryBoundary.y - ny * halfROW },
-        { x: entryLoop.x - nx * halfROW, y: entryLoop.y - ny * halfROW }
-      ],
-      isPrimary: false
-    });
+  // 2. Find entry point — perpendicular to the nearest boundary edge
+  const entryResult = findPerpendicularEntry(state.vertices, loopPath, halfROW);
+  if (entryResult) {
+    state.streets.push(entryResult.street);
   }
 
   // 3. Outer lots — between boundary (buffer edge) and outer loop ROW
@@ -2896,6 +3022,7 @@ function clearLayout() {
   state.bufferedBoundary = [];
   state.curvedStreets = [];
   state.culdesacs = [];
+state.knuckles = [];
   document.getElementById('yieldTotal').textContent = '--';
   document.getElementById('yieldCompliant').textContent = '--';
   document.getElementById('yieldFlagged').textContent = '--';
@@ -3104,6 +3231,42 @@ function drawStreets() {
         ctx.fillText('R=' + cds.rowRadius + '\' ROW', scx, scy + rowR + 14);
         const typeLabel = cds.type === 'offset' ? 'Std 800A' : 'Std 800';
         ctx.fillText(typeLabel, scx, scy + rowR + 25);
+      }
+    }
+  }
+
+  // Draw knuckles (Std 801) at intersections < 120°
+  if (state.knuckles) {
+    for (const k of state.knuckles) {
+      const [scx, scy] = worldToScreen(k.center.x, k.center.y);
+      const r = (k.radius / state.scale) * state.zoom;
+
+      // Compute arc sweep between the two street directions
+      const angleA = Math.atan2(k.dirA.y, k.dirA.x);
+      const angleB = Math.atan2(k.dirB.y, k.dirB.x);
+
+      // Knuckle arc — property line curve at intersection
+      ctx.strokeStyle = 'rgba(78, 205, 196, 0.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(scx, scy, r, -angleA, -angleB, false);
+      ctx.stroke();
+
+      // Fill arc region
+      ctx.fillStyle = 'rgba(78, 205, 196, 0.08)';
+      ctx.beginPath();
+      ctx.moveTo(scx, scy);
+      ctx.arc(scx, scy, r, -angleA, -angleB, false);
+      ctx.closePath();
+      ctx.fill();
+
+      // Label
+      if (state.zoom > 0.4) {
+        ctx.font = '8px Consolas, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(78, 205, 196, 0.7)';
+        ctx.fillText('Knuckle', scx, scy - r - 4);
+        ctx.fillText(Math.round(k.angle) + '°', scx, scy - r - 14);
       }
     }
   }
@@ -3490,6 +3653,18 @@ function exportDXF() {
       dxf += '0\nCIRCLE\n8\nSTREET-CL\n';
       dxf += '10\n' + cds.center.x.toFixed(4) + '\n20\n' + cds.center.y.toFixed(4) + '\n30\n0.0\n';
       dxf += '40\n' + cds.pavedRadius.toFixed(4) + '\n';
+    }
+  }
+
+  // Knuckles (Std 801)
+  if (state.knuckles) {
+    for (const k of state.knuckles) {
+      dxf += '0\nCIRCLE\n8\nROW\n';
+      dxf += '10\n' + k.center.x.toFixed(4) + '\n20\n' + k.center.y.toFixed(4) + '\n30\n0.0\n';
+      dxf += '40\n' + k.radius.toFixed(4) + '\n';
+      dxf += '0\nTEXT\n8\nLOT-LABELS\n';
+      dxf += '10\n' + k.center.x.toFixed(4) + '\n20\n' + k.center.y.toFixed(4) + '\n30\n0.0\n';
+      dxf += '40\n3\n1\nKNUCKLE ' + Math.round(k.angle) + 'deg\n';
     }
   }
 
