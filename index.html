@@ -699,6 +699,111 @@ input[type="range"]::-moz-range-thumb {
   margin-bottom: 8px;
   margin-top: 4px;
 }
+
+/* ========================================
+   AI ASSISTANT — Phase 6
+   ======================================== */
+.ai-callout {
+  background: #1A1A2E;
+  border: 1px solid var(--color-accent);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  max-height: 200px;
+  overflow-y: auto;
+  display: none;
+}
+
+.ai-callout.visible {
+  display: block;
+}
+
+.ai-callout .ai-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--color-accent);
+  margin-bottom: 6px;
+}
+
+.ai-callout .ai-notes {
+  color: var(--text-label);
+  white-space: pre-wrap;
+}
+
+.ai-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ai-comparison .cmp-card {
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.ai-comparison .cmp-card .cmp-label {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.ai-comparison .cmp-card .cmp-before {
+  font-family: 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.ai-comparison .cmp-card .cmp-after {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-success);
+}
+
+.ai-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.api-key-input {
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: 'Consolas', monospace;
+  outline: none;
+  letter-spacing: 1px;
+}
+
+.api-key-input:focus {
+  border-color: var(--input-focus);
+}
 </style>
 </head>
 <body>
@@ -992,6 +1097,66 @@ input[type="range"]::-moz-range-thumb {
           <div class="stat-card">
             <div class="stat-value" id="yieldLotArea">--</div>
             <div class="stat-label">Avg Lot Area (sf)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Design Assistant — Phase 6 -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>AI Design Assistant</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="form-row">
+          <label>Claude API Key</label>
+          <input type="password" class="api-key-input" id="apiKey"
+                 placeholder="sk-ant-..."
+                 oninput="localStorage.setItem('claude_api_key', this.value)" />
+        </div>
+        <div class="form-row">
+          <label>Model</label>
+          <select id="aiModel">
+            <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (fast)</option>
+            <option value="claude-opus-4-6">Claude Opus 4.6 (best)</option>
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (cheapest)</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="optimizeLayout()" id="btnOptimize">
+          Optimize Layout
+        </button>
+        <button class="btn" onclick="askAI()" style="margin-top:6px;" id="btnAskAI">
+          Ask AI for Advice
+        </button>
+
+        <!-- AI Response Callout -->
+        <div class="ai-callout" id="aiCallout">
+          <div class="ai-label">AI Consultant Notes</div>
+          <div class="ai-notes" id="aiNotes"></div>
+        </div>
+
+        <!-- Before/After Comparison -->
+        <div class="ai-comparison" id="aiComparison" style="display:none;">
+          <div class="cmp-card">
+            <div class="cmp-label">Lot Width</div>
+            <div class="cmp-before" id="cmpWidthBefore">--</div>
+            <div class="cmp-after" id="cmpWidthAfter">--</div>
+          </div>
+          <div class="cmp-card">
+            <div class="cmp-label">Lot Depth</div>
+            <div class="cmp-before" id="cmpDepthBefore">--</div>
+            <div class="cmp-after" id="cmpDepthAfter">--</div>
+          </div>
+          <div class="cmp-card">
+            <div class="cmp-label">ROW Width</div>
+            <div class="cmp-before" id="cmpRowBefore">--</div>
+            <div class="cmp-after" id="cmpRowAfter">--</div>
+          </div>
+          <div class="cmp-card">
+            <div class="cmp-label">Lots</div>
+            <div class="cmp-before" id="cmpLotsBefore">--</div>
+            <div class="cmp-after" id="cmpLotsAfter">--</div>
           </div>
         </div>
       </div>
@@ -3208,6 +3373,229 @@ function dxfText(x, y, text, layer, height) {
   return '0\nTEXT\n8\n' + layer + '\n' +
     '10\n' + x.toFixed(4) + '\n20\n' + y.toFixed(4) + '\n30\n0.0\n' +
     '40\n' + (height || 4) + '\n1\n' + text + '\n';
+}
+
+// ============================================
+// PHASE 6 — AI DESIGN ASSISTANT
+// ============================================
+
+// Load saved API key
+(function() {
+  const saved = localStorage.getItem('claude_api_key');
+  if (saved) document.getElementById('apiKey').value = saved;
+})();
+
+function getAIContext() {
+  const params = getDesignParams();
+  const totalArea = state.isClosed ? calcArea(state.vertices) : 0;
+  const acres = totalArea / 43560;
+  const perim = state.isClosed ? calcPerimeter(state.vertices) : 0;
+  return {
+    boundary: {
+      acreage: +acres.toFixed(3),
+      totalAreaSqFt: Math.round(totalArea),
+      perimeterFt: +perim.toFixed(1),
+      vertexCount: state.vertices.length
+    },
+    currentParameters: {
+      layoutPattern: params.layoutPattern,
+      rowWidth: params.rowWidth,
+      roadwayWidth: params.roadwayWidth,
+      minLotWidth: params.minLotWidth,
+      minLotDepth: params.minLotDepth,
+      minLotArea: params.minLotArea,
+      cornerLotBonus: params.cornerLotBonus,
+      perimeterSetback: params.perimeterSetback,
+      cdsRadius: params.cdsRadius,
+      streetOrientation: params.streetOrientation
+    },
+    yieldSummary: {
+      totalLots: state.lots.length,
+      compliantLots: state.lots.filter(l => l.compliant).length,
+      undersizedLots: state.lots.filter(l => !l.compliant).length,
+      avgLotAreaSqFt: state.lots.length > 0
+        ? Math.round(state.lots.reduce((s, l) => s + l.area, 0) / state.lots.length)
+        : 0,
+      actualDensity: acres > 0 ? +(state.lots.length / acres).toFixed(2) : 0,
+      streetCount: state.streets.length
+    }
+  };
+}
+
+async function callClaudeAPI(systemPrompt, userMessage) {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) {
+    showToast('Enter your Claude API key first', 'warning');
+    return null;
+  }
+  const model = document.getElementById('aiModel').value;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || 'API error ' + response.status);
+    }
+
+    const data = await response.json();
+    return data.content[0].text;
+  } catch (err) {
+    showToast('API Error: ' + err.message, 'error');
+    return null;
+  }
+}
+
+async function optimizeLayout() {
+  if (!state.isClosed || state.vertices.length < 3) {
+    showToast('Define a boundary and generate a layout first', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btnOptimize');
+  btn.innerHTML = '<span class="ai-spinner"></span> Optimizing...';
+  btn.disabled = true;
+
+  const context = getAIContext();
+  const beforeLots = state.lots.length;
+  const beforeParams = getDesignParams();
+
+  const systemPrompt = `You are a civil engineering subdivision design consultant with 30 years of experience in residential land development. Analyze this site yield data and suggest parameter adjustments to maximize lot count while maintaining minimum lot standards and good engineering practice.
+
+Rules you MUST follow:
+- ROW width must be at least 50ft for residential streets
+- Minimum lot width must be at least 40ft
+- Minimum lot depth must be at least 80ft
+- Minimum lot area must comply with typical R-1 zoning (min 5,000 sf)
+- Consider that narrower lots and reduced ROW can increase yield but must remain practical
+- Corner lots need extra width for sight triangles
+- Cul-de-sac radius must be at least 40ft ROW
+
+Respond ONLY with valid JSON (no markdown, no code fences) with these fields:
+{
+  "suggested_lot_width": number,
+  "suggested_lot_depth": number,
+  "suggested_row_width": number,
+  "suggested_lot_area": number,
+  "suggested_setback": number,
+  "suggested_orientation": number,
+  "notes": "string with your analysis and reasoning"
+}`;
+
+  const userMessage = `Here is the current subdivision site data:\n\n${JSON.stringify(context, null, 2)}\n\nPlease analyze and suggest optimized parameters to maximize lot yield while maintaining engineering standards.`;
+
+  const result = await callClaudeAPI(systemPrompt, userMessage);
+
+  btn.innerHTML = 'Optimize Layout';
+  btn.disabled = false;
+
+  if (!result) return;
+
+  try {
+    // Parse JSON — handle possible markdown code fences
+    let jsonStr = result.trim();
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    }
+    const suggestions = JSON.parse(jsonStr);
+
+    // Show notes
+    const callout = document.getElementById('aiCallout');
+    callout.classList.add('visible');
+    document.getElementById('aiNotes').textContent = suggestions.notes || 'No additional notes.';
+
+    // Show before/after comparison
+    const cmp = document.getElementById('aiComparison');
+    cmp.style.display = 'grid';
+    document.getElementById('cmpWidthBefore').textContent = beforeParams.minLotWidth + ' ft';
+    document.getElementById('cmpDepthBefore').textContent = beforeParams.minLotDepth + ' ft';
+    document.getElementById('cmpRowBefore').textContent = beforeParams.rowWidth + ' ft';
+    document.getElementById('cmpLotsBefore').textContent = beforeLots;
+
+    // Apply suggestions
+    if (suggestions.suggested_lot_width) {
+      document.getElementById('minLotWidth').value = suggestions.suggested_lot_width;
+      document.getElementById('cmpWidthAfter').textContent = suggestions.suggested_lot_width + ' ft';
+    }
+    if (suggestions.suggested_lot_depth) {
+      document.getElementById('minLotDepth').value = suggestions.suggested_lot_depth;
+      document.getElementById('cmpDepthAfter').textContent = suggestions.suggested_lot_depth + ' ft';
+    }
+    if (suggestions.suggested_row_width) {
+      document.getElementById('rowWidth').value = suggestions.suggested_row_width;
+      document.getElementById('cmpRowAfter').textContent = suggestions.suggested_row_width + ' ft';
+    }
+    if (suggestions.suggested_lot_area) {
+      document.getElementById('minLotArea').value = suggestions.suggested_lot_area;
+    }
+    if (suggestions.suggested_setback !== undefined) {
+      document.getElementById('perimeterSetback').value = suggestions.suggested_setback;
+    }
+    if (suggestions.suggested_orientation !== undefined) {
+      document.getElementById('streetOrientation').value = suggestions.suggested_orientation;
+      document.getElementById('orientVal').textContent = suggestions.suggested_orientation + '°';
+    }
+
+    // Re-run layout engine with new parameters
+    generateLayout();
+
+    // Update after lots count
+    document.getElementById('cmpLotsAfter').textContent = state.lots.length;
+
+    const delta = state.lots.length - beforeLots;
+    const sign = delta >= 0 ? '+' : '';
+    showToast('AI optimization applied: ' + sign + delta + ' lots (' + state.lots.length + ' total)', 'success');
+
+  } catch (err) {
+    // If JSON parse fails, still show the raw response as notes
+    const callout = document.getElementById('aiCallout');
+    callout.classList.add('visible');
+    document.getElementById('aiNotes').textContent = result;
+    showToast('AI responded but could not auto-apply. See notes.', 'warning');
+  }
+}
+
+async function askAI() {
+  if (!state.isClosed || state.vertices.length < 3) {
+    showToast('Define a boundary first', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btnAskAI');
+  btn.innerHTML = '<span class="ai-spinner"></span> Thinking...';
+  btn.disabled = true;
+
+  const context = getAIContext();
+
+  const systemPrompt = `You are a civil engineering subdivision design consultant. The user has a site they want to subdivide. Provide practical advice about their site and layout. Be specific about what works well and what could be improved. Consider zoning, road connectivity, drainage, open space requirements, and market appeal. Keep your response concise (under 200 words).`;
+
+  const userMessage = `Here is my subdivision site data:\n\n${JSON.stringify(context, null, 2)}\n\nWhat advice do you have for this subdivision layout? What should I consider changing?`;
+
+  const result = await callClaudeAPI(systemPrompt, userMessage);
+
+  btn.innerHTML = 'Ask AI for Advice';
+  btn.disabled = false;
+
+  if (!result) return;
+
+  const callout = document.getElementById('aiCallout');
+  callout.classList.add('visible');
+  document.getElementById('aiNotes').textContent = result;
+  showToast('AI advice received', 'success');
 }
 
 // ============================================
