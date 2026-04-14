@@ -997,6 +997,56 @@ input[type="range"]::-moz-range-thumb {
       </div>
     </div>
 
+    <!-- Export & Annotation — Phase 5 -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Export</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="btn-group">
+          <button class="btn btn-success" onclick="exportPNG()">PNG</button>
+          <button class="btn btn-success" onclick="exportDXF()">DXF</button>
+          <button class="btn btn-success" onclick="exportJSON()">JSON</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Annotations — Phase 5 -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Annotations</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showLotNumbers" checked onchange="render()" /> Lot Numbers
+          </label>
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showStreetNames" checked onchange="render()" /> Street Names
+          </label>
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showDimTicks" checked onchange="render()" /> ROW Dimension Ticks
+          </label>
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showNorthArrow" checked onchange="render()" /> North Arrow
+          </label>
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="showScaleBar" checked onchange="render()" /> Scale Bar
+          </label>
+        </div>
+      </div>
+    </div>
+
     <!-- View Controls -->
     <div class="panel-section">
       <div class="panel-section-header" onclick="toggleSection(this)">
@@ -1280,6 +1330,9 @@ function render() {
   drawStreets();
   drawLots();
   drawBoundary();
+  drawAnnotations();
+  drawNorthArrow();
+  drawScaleBar();
 }
 
 // ============================================
@@ -2804,6 +2857,357 @@ function drawLots() {
       }
     }
   }
+}
+
+// ============================================
+// PHASE 5 — STREET NAME GENERATOR
+// ============================================
+function assignStreetNames() {
+  const names = { primary: [], cross: [] };
+  let pNum = 1, cCode = 65; // 'A'
+  for (const st of state.streets) {
+    if (!st._name) {
+      if (st.isPrimary) {
+        st._name = ordinalStreet(pNum++);
+      } else {
+        st._name = 'Road ' + String.fromCharCode(cCode++);
+        if (cCode > 90) cCode = 65; // wrap after Z
+      }
+    }
+  }
+}
+
+function ordinalStreet(n) {
+  const s = ['th','st','nd','rd'];
+  const v = n % 100;
+  return n + (s[(v-20)%10] || s[v] || s[0]) + ' Street';
+}
+
+// ============================================
+// PHASE 5 — ANNOTATIONS
+// ============================================
+function drawAnnotations() {
+  const showNames = document.getElementById('showStreetNames').checked;
+  const showTicks = document.getElementById('showDimTicks').checked;
+
+  // Street names
+  if (showNames && state.streets.length > 0) {
+    assignStreetNames();
+    // Only label unique streets (skip segment duplicates for curved streets)
+    const labeled = new Set();
+    for (const st of state.streets) {
+      if (!st._name || labeled.has(st._name)) continue;
+      labeled.add(st._name);
+      const [a, b] = st.centerline;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const [sx, sy] = worldToScreen(mx, my);
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      // Flip text angle for readability (keep text upright)
+      let textAngle = -angle; // negate because canvas Y is flipped
+      if (textAngle > Math.PI/2) textAngle -= Math.PI;
+      if (textAngle < -Math.PI/2) textAngle += Math.PI;
+      ctx.rotate(textAngle);
+      ctx.font = 'bold 10px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255, 217, 61, 0.8)';
+      ctx.fillText(st._name, 0, -6);
+      ctx.restore();
+    }
+  }
+
+  // ROW dimension ticks
+  if (showTicks && state.streets.length > 0) {
+    const tickLen = 8;
+    const labeled2 = new Set();
+    for (const st of state.streets) {
+      const key = st._name || '';
+      if (labeled2.has(key)) continue;
+      labeled2.add(key);
+      // Draw tick marks at midpoint showing ROW width
+      const [a, b] = st.centerline;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const lm = st.rowLeft;
+      const rm = st.rowRight;
+      const lmx = (lm[0].x + lm[1].x) / 2, lmy = (lm[0].y + lm[1].y) / 2;
+      const rmx = (rm[0].x + rm[1].x) / 2, rmy = (rm[0].y + rm[1].y) / 2;
+      const rowW = Math.hypot(lmx - rmx, lmy - rmy);
+
+      const [slx, sly] = worldToScreen(lmx, lmy);
+      const [srx, sry] = worldToScreen(rmx, rmy);
+
+      // Tick lines perpendicular to ROW edge
+      const dx = srx - slx, dy = sry - sly;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const tnx = -dy/len * tickLen, tny = dx/len * tickLen;
+
+      ctx.strokeStyle = 'rgba(150,150,150,0.5)';
+      ctx.lineWidth = 1;
+      // Left tick
+      ctx.beginPath();
+      ctx.moveTo(slx - tnx, sly - tny);
+      ctx.lineTo(slx + tnx, sly + tny);
+      ctx.stroke();
+      // Right tick
+      ctx.beginPath();
+      ctx.moveTo(srx - tnx, sry - tny);
+      ctx.lineTo(srx + tnx, sry + tny);
+      ctx.stroke();
+      // Dimension line
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(slx, sly);
+      ctx.lineTo(srx, sry);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Label
+      const dmx = (slx + srx) / 2, dmy = (sly + sry) / 2;
+      ctx.font = '9px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(200,200,200,0.6)';
+      ctx.fillText(rowW.toFixed(0) + "'", dmx, dmy - 4);
+    }
+  }
+}
+
+// ============================================
+// PHASE 5 — NORTH ARROW
+// ============================================
+function drawNorthArrow() {
+  if (!document.getElementById('showNorthArrow').checked) return;
+  const x = W - 50;
+  const y = 80;
+  const size = 30;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Arrow body
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(size * 0.3, size * 0.3);
+  ctx.lineTo(0, size * 0.1);
+  ctx.lineTo(-size * 0.3, size * 0.3);
+  ctx.closePath();
+
+  // Fill left half dark, right half light
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Dark half
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(-size * 0.3, size * 0.3);
+  ctx.lineTo(0, size * 0.1);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100, 100, 100, 0.8)';
+  ctx.fill();
+
+  // N label
+  ctx.font = 'bold 14px Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fillText('N', 0, -size - 6);
+
+  ctx.restore();
+}
+
+// ============================================
+// PHASE 5 — SCALE BAR
+// ============================================
+function drawScaleBar() {
+  if (!document.getElementById('showScaleBar').checked) return;
+  const barX = 20;
+  const barY = H - 20;
+
+  // Determine a nice round scale length
+  const pixPer100ft = (100 / state.scale) * state.zoom;
+  let scaleLen = 100; // feet
+  if (pixPer100ft < 30) scaleLen = 500;
+  else if (pixPer100ft < 60) scaleLen = 200;
+  else if (pixPer100ft > 300) scaleLen = 50;
+
+  const barW = (scaleLen / state.scale) * state.zoom;
+  const barH = 6;
+
+  // Background
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(barX - 4, barY - 18, barW + 8, 28);
+
+  // Bar with alternating segments
+  const segs = 4;
+  const segW = barW / segs;
+  for (let i = 0; i < segs; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#FFFFFF' : '#666666';
+    ctx.fillRect(barX + i * segW, barY - barH, segW, barH);
+  }
+
+  // Border
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY - barH, barW, barH);
+
+  // Labels
+  ctx.font = '10px Consolas, monospace';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'left';
+  ctx.fillText('0', barX, barY - barH - 3);
+  ctx.textAlign = 'right';
+  ctx.fillText(scaleLen + ' ft', barX + barW, barY - barH - 3);
+}
+
+// ============================================
+// PHASE 5 — EXPORT PNG
+// ============================================
+function exportPNG() {
+  const link = document.createElement('a');
+  link.download = (document.getElementById('projectName').value || 'subdivision_concept') + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  showToast('PNG exported', 'success');
+}
+
+// ============================================
+// PHASE 5 — EXPORT JSON
+// ============================================
+function exportJSON() {
+  const params = getDesignParams();
+  const data = {
+    project: document.getElementById('projectName').value,
+    exportDate: new Date().toISOString(),
+    boundary: state.vertices.map(v => ({ x: v.x, y: v.y })),
+    designParameters: params,
+    boundaryInfo: {
+      areaSqFt: state.isClosed ? calcArea(state.vertices) : 0,
+      acreage: state.isClosed ? calcArea(state.vertices) / 43560 : 0,
+      perimeterFt: state.isClosed ? calcPerimeter(state.vertices) : 0
+    },
+    lots: state.lots.map(l => ({
+      number: l.number,
+      corners: l.polygon.map(p => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })),
+      areaSqFt: +l.area.toFixed(1),
+      width: +l.width.toFixed(1),
+      depth: +l.depth.toFixed(1),
+      compliant: l.compliant
+    })),
+    streets: state.streets.map(s => ({
+      name: s._name || null,
+      centerline: s.centerline.map(p => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })),
+      isPrimary: s.isPrimary
+    }))
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.download = (document.getElementById('projectName').value || 'subdivision') + '_data.json';
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  showToast('JSON exported (' + state.lots.length + ' lots)', 'success');
+}
+
+// ============================================
+// PHASE 5 — EXPORT DXF
+// ============================================
+function exportDXF() {
+  let dxf = '';
+
+  // Header
+  dxf += '0\nSECTION\n2\nHEADER\n';
+  dxf += '9\n$ACADVER\n1\nAC1014\n';
+  dxf += '0\nENDSEC\n';
+
+  // Tables — layers
+  dxf += '0\nSECTION\n2\nTABLES\n';
+  dxf += '0\nTABLE\n2\nLAYER\n';
+  const layers = [
+    { name: 'BOUNDARY', color: 7 },
+    { name: 'STREET-CL', color: 2 },
+    { name: 'ROW', color: 3 },
+    { name: 'LOTS', color: 8 },
+    { name: 'LOT-LABELS', color: 1 },
+    { name: 'STREET-NAMES', color: 4 }
+  ];
+  for (const l of layers) {
+    dxf += '0\nLAYER\n2\n' + l.name + '\n70\n0\n62\n' + l.color + '\n6\nCONTINUOUS\n';
+  }
+  dxf += '0\nENDTAB\n';
+  dxf += '0\nENDSEC\n';
+
+  // Entities
+  dxf += '0\nSECTION\n2\nENTITIES\n';
+
+  // Boundary polyline
+  if (state.vertices.length > 2) {
+    dxf += dxfPolyline(state.vertices, 'BOUNDARY', true);
+  }
+
+  // Street centerlines
+  for (const st of state.streets) {
+    const [a, b] = st.centerline;
+    dxf += dxfLine(a, b, 'STREET-CL');
+    // ROW edges
+    dxf += dxfLine(st.rowLeft[0], st.rowLeft[1], 'ROW');
+    dxf += dxfLine(st.rowRight[0], st.rowRight[1], 'ROW');
+  }
+
+  // Lot polylines
+  for (const lot of state.lots) {
+    dxf += dxfPolyline(lot.polygon, 'LOTS', true);
+    // Lot number as text
+    let cx = 0, cy = 0;
+    for (const p of lot.polygon) { cx += p.x; cy += p.y; }
+    cx /= lot.polygon.length; cy /= lot.polygon.length;
+    dxf += dxfText(cx, cy, lot.number.toString(), 'LOT-LABELS', 4);
+  }
+
+  // Street names as text
+  assignStreetNames();
+  const labeled = new Set();
+  for (const st of state.streets) {
+    if (!st._name || labeled.has(st._name)) continue;
+    labeled.add(st._name);
+    const [a, b] = st.centerline;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    dxf += dxfText(mx, my, st._name, 'STREET-NAMES', 5);
+  }
+
+  dxf += '0\nENDSEC\n';
+  dxf += '0\nEOF\n';
+
+  const blob = new Blob([dxf], { type: 'application/dxf' });
+  const link = document.createElement('a');
+  link.download = (document.getElementById('projectName').value || 'subdivision') + '.dxf';
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  showToast('DXF exported (' + layers.length + ' layers)', 'success');
+}
+
+function dxfLine(a, b, layer) {
+  return '0\nLINE\n8\n' + layer + '\n' +
+    '10\n' + a.x.toFixed(4) + '\n20\n' + a.y.toFixed(4) + '\n30\n0.0\n' +
+    '11\n' + b.x.toFixed(4) + '\n21\n' + b.y.toFixed(4) + '\n31\n0.0\n';
+}
+
+function dxfPolyline(verts, layer, closed) {
+  let s = '0\nLWPOLYLINE\n8\n' + layer + '\n';
+  s += '90\n' + verts.length + '\n';
+  s += '70\n' + (closed ? '1' : '0') + '\n';
+  for (const v of verts) {
+    s += '10\n' + v.x.toFixed(4) + '\n20\n' + v.y.toFixed(4) + '\n';
+  }
+  return s;
+}
+
+function dxfText(x, y, text, layer, height) {
+  return '0\nTEXT\n8\n' + layer + '\n' +
+    '10\n' + x.toFixed(4) + '\n20\n' + y.toFixed(4) + '\n30\n0.0\n' +
+    '40\n' + (height || 4) + '\n1\n' + text + '\n';
 }
 
 // ============================================
