@@ -2282,12 +2282,13 @@ function reverseCallLine(line) {
 // Check if a polygon winds clockwise (in engineering coords, Y-up)
 // Returns true if clockwise
 function isClockwise(verts) {
+  // Use proper shoelace for Y-up: negative signed area = clockwise
   let sum = 0;
   for (let i = 0; i < verts.length; i++) {
     const j = (i + 1) % verts.length;
-    sum += (verts[j].x - verts[i].x) * (verts[j].y + verts[i].y);
+    sum += verts[i].x * verts[j].y - verts[j].x * verts[i].y;
   }
-  return sum > 0; // positive = clockwise in Y-up coordinate system
+  return sum < 0; // negative cross-product sum = clockwise in Y-up
 }
 
 // Auto-correct metes & bounds calls to produce clockwise winding
@@ -2945,13 +2946,15 @@ state.knuckles = [];
 function offsetPolygon(verts, dist) {
   const n = verts.length;
   if (n < 3) return [];
-  // Ensure CCW winding
-  let signedArea = 0;
+  // Ensure CCW winding for Y-up engineering coordinates
+  // Shoelace: positive cross-product sum = CCW in Y-up
+  let signedArea2 = 0;
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
-    signedArea += (verts[j].x - verts[i].x) * (verts[j].y + verts[i].y);
+    signedArea2 += verts[i].x * verts[j].y - verts[j].x * verts[i].y;
   }
-  const poly = signedArea > 0 ? verts.slice() : verts.slice().reverse();
+  // signedArea2 > 0 = CCW in Y-up, < 0 = CW
+  const poly = signedArea2 > 0 ? verts.slice() : verts.slice().reverse();
   const offsetEdges = [];
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
@@ -3060,12 +3063,21 @@ function polygonArea(verts) {
 
 // -- Clip a convex polygon to a convex or concave polygon using Sutherland-Hodgman --
 function clipPolygonSH(subject, clip) {
+  if (subject.length < 3 || clip.length < 3) return [];
+  // Ensure clip polygon is CCW for correct inside/outside test
+  let clipArea = 0;
+  for (let i = 0; i < clip.length; i++) {
+    const j = (i+1) % clip.length;
+    clipArea += (clip[j].x - clip[i].x) * (clip[j].y + clip[i].y);
+  }
+  const clipPoly = clipArea > 0 ? clip.slice().reverse() : clip.slice();
+
   let output = subject.slice();
-  for (let i = 0; i < clip.length && output.length > 0; i++) {
+  for (let i = 0; i < clipPoly.length && output.length > 0; i++) {
     const input = output;
     output = [];
-    const edgeStart = clip[i];
-    const edgeEnd = clip[(i + 1) % clip.length];
+    const edgeStart = clipPoly[i];
+    const edgeEnd = clipPoly[(i + 1) % clipPoly.length];
     for (let j = 0; j < input.length; j++) {
       const cur = input[j];
       const prev = input[(j + input.length - 1) % input.length];
@@ -4053,6 +4065,46 @@ function drawStreets() {
     const [ra2x, ra2y] = worldToScreen(st.rowRight[1].x, st.rowRight[1].y);
     ctx.beginPath(); ctx.moveTo(ra1x, ra1y); ctx.lineTo(ra2x, ra2y); ctx.stroke();
     ctx.setLineDash([]);
+
+    // Draw curb returns for entry streets
+    if (st.isEntry && st.curbReturnR) {
+      const cr = (st.curbReturnR / state.scale) * state.zoom;
+      const bpt = st.boundaryPt;
+      const norm = st.normal;
+      const edir = st.edgeDir;
+      const halfR = params.rowWidth / 2;
+
+      // Left curb return arc — at boundary/ROW intersection
+      const lcx = bpt.x + edir.x * halfR + norm.x * st.curbReturnR;
+      const lcy = bpt.y + edir.y * halfR + norm.y * st.curbReturnR;
+      const [slcx, slcy] = worldToScreen(lcx, lcy);
+      const startAngleL = Math.atan2(-(-norm.y), -norm.x); // negate Y for canvas
+      ctx.strokeStyle = 'rgba(255, 200, 50, 0.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(slcx, slcy, cr, startAngleL, startAngleL + Math.PI/2, false);
+      ctx.stroke();
+
+      // Right curb return arc
+      const rcx = bpt.x - edir.x * halfR + norm.x * st.curbReturnR;
+      const rcy = bpt.y - edir.y * halfR + norm.y * st.curbReturnR;
+      const [srcx, srcy] = worldToScreen(rcx, rcy);
+      const startAngleR = Math.atan2(-(-norm.y), norm.x);
+      ctx.beginPath();
+      ctx.arc(srcx, srcy, cr, startAngleR - Math.PI/2, startAngleR, false);
+      ctx.stroke();
+
+      // Entry label
+      if (state.zoom > 0.3) {
+        const [elx, ely] = worldToScreen(bpt.x, bpt.y);
+        ctx.font = 'bold 10px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255, 200, 50, 0.9)';
+        ctx.fillText('ENTRY', elx, ely - 12);
+        ctx.font = '8px Consolas, monospace';
+        ctx.fillText('R=' + st.curbReturnR + "' CR", elx, ely - 24);
+      }
+    }
   }
 
   // Draw curved street spines (Bezier curves)
@@ -4184,38 +4236,76 @@ function drawStreets() {
     }
   }
 
-  // Draw knuckles (Std 801) at intersections < 120°
+  // Draw knuckles (Riverside Co. Std 801) at intersections < 120°
   if (state.knuckles) {
     for (const k of state.knuckles) {
       const [scx, scy] = worldToScreen(k.center.x, k.center.y);
       const r = (k.radius / state.scale) * state.zoom;
 
-      // Compute arc sweep between the two street directions
-      const angleA = Math.atan2(k.dirA.y, k.dirA.x);
-      const angleB = Math.atan2(k.dirB.y, k.dirB.x);
+      // Std 801: Property line curve at knuckle return
+      // The knuckle is an arc between two street ROW lines
+      // dirA and dirB are the outgoing street directions from the intersection
+      const angleA = Math.atan2(-k.dirA.y, k.dirA.x); // negate Y for canvas
+      const angleB = Math.atan2(-k.dirB.y, k.dirB.x);
 
-      // Knuckle arc — property line curve at intersection
-      ctx.strokeStyle = 'rgba(78, 205, 196, 0.7)';
-      ctx.lineWidth = 2;
+      // Draw the property line ROW curves on both sides
+      // Outer ROW arc (property line)
+      ctx.strokeStyle = 'rgba(78, 205, 196, 0.8)';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(scx, scy, r, -angleA, -angleB, false);
+      // Sweep from perpendicular of dirA to perpendicular of dirB
+      const perpA = angleA - Math.PI/2;
+      const perpB = angleB + Math.PI/2;
+      ctx.arc(scx, scy, r, perpA, perpB, false);
       ctx.stroke();
 
-      // Fill arc region
-      ctx.fillStyle = 'rgba(78, 205, 196, 0.08)';
+      // Inner curb arc (smaller radius)
+      const innerR = r * 0.65;
+      ctx.strokeStyle = 'rgba(78, 205, 196, 0.5)';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(scx, scy);
-      ctx.arc(scx, scy, r, -angleA, -angleB, false);
+      ctx.arc(scx, scy, innerR, perpA, perpB, false);
+      ctx.stroke();
+
+      // Fill between arcs
+      ctx.fillStyle = 'rgba(78, 205, 196, 0.06)';
+      ctx.beginPath();
+      ctx.arc(scx, scy, r, perpA, perpB, false);
+      ctx.arc(scx, scy, innerR, perpB, perpA, true);
       ctx.closePath();
       ctx.fill();
 
-      // Label
-      if (state.zoom > 0.4) {
-        ctx.font = '8px Consolas, monospace';
+      // Tangent lines connecting to street ROW
+      const tanLen = r * 0.4;
+      for (const [angle, dir] of [[perpA, k.dirA], [perpB, k.dirB]]) {
+        const ex = scx + Math.cos(angle) * r;
+        const ey = scy + Math.sin(angle) * r;
+        ctx.strokeStyle = 'rgba(78, 205, 196, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex + Math.cos(angle) * tanLen, ey + Math.sin(angle) * tanLen);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Center point
+      ctx.fillStyle = 'rgba(78, 205, 196, 0.7)';
+      ctx.beginPath();
+      ctx.arc(scx, scy, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Labels
+      if (state.zoom > 0.3) {
+        ctx.font = 'bold 9px Consolas, monospace';
         ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(78, 205, 196, 0.9)';
+        ctx.fillText('KNUCKLE', scx, scy - r - 8);
+        ctx.font = '8px Consolas, monospace';
         ctx.fillStyle = 'rgba(78, 205, 196, 0.7)';
-        ctx.fillText('Knuckle', scx, scy - r - 4);
-        ctx.fillText(Math.round(k.angle) + '°', scx, scy - r - 14);
+        ctx.fillText('R=' + k.radius + "'  " + Math.round(k.angle) + '°', scx, scy - r - 18);
+        ctx.fillText('Std 801', scx, scy + r + 14);
       }
     }
   }
@@ -4938,6 +5028,8 @@ function placeEntryAt(worldX, worldY) {
   const eLen = Math.sqrt(edx*edx + edy*edy) || 1;
   const sNx = edx/eLen, sNy = edy/eLen;
 
+  // Curb return radius at boundary intersection (25' typical)
+  const curbReturnR = 25;
   const entry = {
     centerline: [bestProjPt, endPt],
     rowLeft: [
@@ -4950,7 +5042,12 @@ function placeEntryAt(worldX, worldY) {
     ],
     isPrimary: false,
     _name: 'Entry ' + (state.manualEntries.length + 1),
-    isManual: true
+    isManual: true,
+    isEntry: true,
+    curbReturnR: curbReturnR,
+    boundaryPt: { x: bestProjPt.x, y: bestProjPt.y },
+    normal: { x: bestNormal.x, y: bestNormal.y },
+    edgeDir: { x: sNx, y: sNy }
   };
   state.manualEntries.push(entry);
   state.streets.push(entry);
