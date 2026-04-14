@@ -1092,6 +1092,13 @@ input[type="range"]::-moz-range-thumb {
           </button>
           <input type="file" id="platImageFile" accept="image/*" style="display:none;" onchange="handlePlatScan(event)" />
           <div id="platScanStatus" style="margin-top:6px; font-size:10px; color:var(--text-secondary);"></div>
+
+          <hr class="param-divider" />
+
+          <!-- Line-by-line verification -->
+          <div class="param-group-label">Verify Calls</div>
+          <div id="metesVerifyList" style="max-height:200px; overflow-y:auto;"></div>
+          <div id="metesClosureInfo" style="margin-top:6px; font-size:11px;"></div>
         </div>
 
         <!-- Tab 4: JSON Import -->
@@ -1786,6 +1793,7 @@ function render() {
   drawLots();
   drawBoundary();
   drawAnnotations();
+  if (typeof drawMetesHighlight === 'function') drawMetesHighlight();
   drawNorthArrow();
   drawScaleBar();
 }
@@ -1951,17 +1959,39 @@ function plotFromCoords() {
 // Parse a DMS bearing string like "N 45°30'15\" E" into radians from north (clockwise)
 function parseBearing(str) {
   str = str.trim().toUpperCase();
-  // Match: N/S dd°mm'ss" E/W
-  const m = str.match(/([NS])\s*(\d+)[°]\s*(\d+)[\']\s*([\d.]+)[\"]*\s*([EW])/);
+  // Normalize unicode quotes and degree symbols
+  str = str.replace(/[\u2018\u2019\u2032]/g, "'").replace(/[\u201C\u201D\u2033]/g, '"').replace(/\u00B0/g, '°');
+
+  // Try format: N 45°30'15" E  or  N45°30'15"E  (with or without spaces)
+  let m = str.match(/([NS])\s*(\d+)\s*[°]\s*(\d+)\s*['\u2019\u2032]\s*([\d.]+)\s*["\u201D\u2033]?\s*([EW])/);
+
+  // Try format without seconds: N 45°30' E
+  if (!m) {
+    m = str.match(/([NS])\s*(\d+)\s*[°]\s*(\d+)\s*['\u2019\u2032]\s*([EW])/);
+    if (m) m = [m[0], m[1], m[2], m[3], '0', m[4]];
+  }
+
+  // Try decimal degrees format: N 45.5083° E
+  if (!m) {
+    const dm = str.match(/([NS])\s*([\d.]+)\s*[°]?\s*([EW])/);
+    if (dm) {
+      const dd = parseFloat(dm[2]);
+      const d = Math.floor(dd);
+      const mm = Math.floor((dd - d) * 60);
+      const ss = ((dd - d) * 60 - mm) * 60;
+      m = [dm[0], dm[1], String(d), String(mm), String(ss), dm[3]];
+    }
+  }
+
   if (!m) return null;
   const ns = m[1], deg = parseFloat(m[2]), min = parseFloat(m[3]), sec = parseFloat(m[4]), ew = m[5];
-  let angle = deg + min / 60 + sec / 3600; // degrees from N or S
+  let angle = deg + min / 60 + sec / 3600;
   let radians;
   if (ns === 'N' && ew === 'E') radians = angle * Math.PI / 180;
-  else if (ns === 'N' && ew === 'W') radians = -angle * Math.PI / 180;  // or 360 - angle
-  else if (ns === 'S' && ew === 'E') radians = Math.PI - angle * Math.PI / 180;
-  else if (ns === 'S' && ew === 'W') radians = Math.PI + angle * Math.PI / 180;
-  return radians; // angle from north, clockwise
+  else if (ns === 'N' && ew === 'W') radians = (360 - angle) * Math.PI / 180;
+  else if (ns === 'S' && ew === 'E') radians = (180 - angle) * Math.PI / 180;
+  else if (ns === 'S' && ew === 'W') radians = (180 + angle) * Math.PI / 180;
+  return radians; // azimuth: angle from north, clockwise, in radians
 }
 
 // Convert bearing (radians from north CW) + distance to delta X, Y
@@ -1976,60 +2006,139 @@ function bearingToXY(bearingRad, dist) {
 // L/R = direction, R = radius, L = arc length, D = delta angle
 function parseCurve(str, lastX, lastY, lastBearing) {
   str = str.trim().toUpperCase();
+
+  // Direction: L or R
   const dirMatch = str.match(/CURVE\s+([LR])/);
-  const rMatch = str.match(/R\s*=\s*([\d.]+)/);
-  const lMatch = str.match(/L\s*=\s*([\d.]+)/);
-  const dMatch = str.match(/D\s*=\s*(\d+)[°]\s*(\d+)[\']\s*([\d.]+)/);
-
-  if (!rMatch || !dMatch) return null;
   const turnDir = dirMatch ? dirMatch[1] : 'L';
-  const radius = parseFloat(rMatch[1]);
-  const deltaD = parseFloat(dMatch[1]) + parseFloat(dMatch[2]) / 60 + parseFloat(dMatch[3]) / 3600;
-  const deltaRad = deltaD * Math.PI / 180;
-  const arcLen = lMatch ? parseFloat(lMatch[1]) : radius * deltaRad;
 
-  // Chord bearing and chord length
-  const halfDelta = deltaRad / 2;
-  const chord = 2 * radius * Math.sin(halfDelta);
+  // Radius
+  const rMatch = str.match(/R\s*=\s*([\d.]+)/);
 
-  // The chord bearing is the last bearing deflected by half the delta
-  let chordBearing;
-  if (turnDir === 'R') {
-    chordBearing = lastBearing + halfDelta;
+  // Arc length
+  const lMatch = str.match(/(?:^|[^C])L\s*=\s*([\d.]+)/); // L= but not CL=
+
+  // Delta angle — try multiple formats
+  let deltaD = null;
+  const dMatch1 = str.match(/D\s*=\s*(\d+)[°]\s*(\d+)['\u2019]\s*([\d.]+)/);
+  const dMatch2 = str.match(/D\s*=\s*(\d+)[°]\s*(\d+)['\u2019]\s*(\d+)["\u201D]/);
+  const dMatch3 = str.match(/[DΔ]\s*=\s*([\d.]+)[°]/); // decimal degrees
+  if (dMatch1) deltaD = parseFloat(dMatch1[1]) + parseFloat(dMatch1[2]) / 60 + parseFloat(dMatch1[3]) / 3600;
+  else if (dMatch2) deltaD = parseFloat(dMatch2[1]) + parseFloat(dMatch2[2]) / 60 + parseFloat(dMatch2[3]) / 3600;
+  else if (dMatch3) deltaD = parseFloat(dMatch3[1]);
+
+  // Chord length
+  const chMatch = str.match(/CH\s*=\s*([\d.]+)/);
+
+  // Chord bearing (e.g., CB=N 45°30'00" E)
+  const cbMatch = str.match(/CB\s*=\s*([NS]\s*\d+[°]\s*\d+['\u2019]\s*[\d.]+["\u201D]?\s*[EW])/);
+
+  // Tangent length
+  const tMatch = str.match(/T\s*=\s*([\d.]+)/);
+
+  // We need radius + at least one of: delta, arc length, chord
+  const radius = rMatch ? parseFloat(rMatch[1]) : null;
+  const arcLen = lMatch ? parseFloat(lMatch[1]) : null;
+  const chordLen = chMatch ? parseFloat(chMatch[1]) : null;
+  let chordBearingFromCB = cbMatch ? parseBearing(cbMatch[1]) : null;
+
+  // Calculate delta if not directly provided
+  let deltaRad;
+  if (deltaD !== null) {
+    deltaRad = deltaD * Math.PI / 180;
+  } else if (radius && arcLen) {
+    deltaRad = arcLen / radius;
+    deltaD = deltaRad * 180 / Math.PI;
+  } else if (radius && chordLen) {
+    deltaRad = 2 * Math.asin(chordLen / (2 * radius));
+    deltaD = deltaRad * 180 / Math.PI;
+  } else if (arcLen && chordLen) {
+    // Approximate: iterate to find radius
+    let rGuess = chordLen; // starting guess
+    for (let iter = 0; iter < 20; iter++) {
+      const dGuess = arcLen / rGuess;
+      const cGuess = 2 * rGuess * Math.sin(dGuess / 2);
+      rGuess = rGuess * chordLen / cGuess;
+    }
+    deltaRad = arcLen / rGuess;
+    deltaD = deltaRad * 180 / Math.PI;
   } else {
-    chordBearing = lastBearing - halfDelta;
+    return null; // not enough data
+  }
+
+  if (!radius && arcLen && deltaRad) {
+    // Can derive radius
+    var effRadius = arcLen / deltaRad;
+  } else if (!radius) {
+    return null;
+  }
+  const R = radius || effRadius;
+
+  const halfDelta = deltaRad / 2;
+  const chord = chordLen || 2 * R * Math.sin(halfDelta);
+
+  // Determine chord bearing:
+  // Priority 1: explicit chord bearing from CB=
+  // Priority 2: calculated from last bearing + half delta
+  let chordBearing;
+  if (chordBearingFromCB !== null) {
+    chordBearing = chordBearingFromCB;
+  } else {
+    if (turnDir === 'R') {
+      chordBearing = lastBearing + halfDelta;
+    } else {
+      chordBearing = lastBearing - halfDelta;
+    }
   }
 
   const dxy = bearingToXY(chordBearing, chord);
 
   // Exit bearing
   let exitBearing;
-  if (turnDir === 'R') {
-    exitBearing = lastBearing + deltaRad;
+  if (chordBearingFromCB !== null) {
+    // If we had a chord bearing, exit = chord bearing + half delta in turn direction
+    if (turnDir === 'R') {
+      exitBearing = chordBearingFromCB + halfDelta;
+    } else {
+      exitBearing = chordBearingFromCB - halfDelta;
+    }
   } else {
-    exitBearing = lastBearing - deltaRad;
+    if (turnDir === 'R') {
+      exitBearing = lastBearing + deltaRad;
+    } else {
+      exitBearing = lastBearing - deltaRad;
+    }
   }
 
   // Generate arc points for smooth display
-  const numPts = Math.max(8, Math.ceil(deltaD / 3));
+  const numPts = Math.max(12, Math.ceil((deltaD || 30) / 2));
   const points = [];
   for (let i = 1; i <= numPts; i++) {
     const frac = i / numPts;
     const partialDelta = deltaRad * frac;
     const partialHalf = partialDelta / 2;
-    const partialChord = 2 * radius * Math.sin(partialHalf);
+    const partialChord = 2 * R * Math.sin(partialHalf);
     let partialBearing;
-    if (turnDir === 'R') {
-      partialBearing = lastBearing + partialHalf;
+    if (chordBearingFromCB !== null) {
+      // Interpolate from entry bearing to exit bearing
+      const entryBearing = chordBearingFromCB - halfDelta * (turnDir === 'R' ? 1 : -1);
+      partialBearing = entryBearing + (turnDir === 'R' ? 1 : -1) * partialHalf;
     } else {
-      partialBearing = lastBearing - partialHalf;
+      if (turnDir === 'R') {
+        partialBearing = lastBearing + partialHalf;
+      } else {
+        partialBearing = lastBearing - partialHalf;
+      }
     }
     const pt = bearingToXY(partialBearing, partialChord);
     points.push({ x: lastX + pt.dx, y: lastY + pt.dy });
   }
 
-  return { dx: dxy.dx, dy: dxy.dy, exitBearing, points, arcLen };
+  return { dx: dxy.dx, dy: dxy.dy, exitBearing, points, arcLen: arcLen || R * deltaRad };
 }
+
+// Store parsed call results for verification highlighting
+state.metesCallSegments = [];
+state.highlightedCallIdx = -1;
 
 function plotFromMetes() {
   const raw = document.getElementById('metesInput').value.trim();
@@ -2043,38 +2152,49 @@ function plotFromMetes() {
   let curX = pobX, curY = pobY;
   let lastBearing = 0;
   let errors = [];
+  const callResults = []; // for verification display
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
+    // Skip POB= lines and comment lines
+    if (line.toUpperCase().startsWith('POB') || line.startsWith('#') || line.startsWith('//')) continue;
+
+    const startX = curX, startY = curY;
+    let ok = false;
+    let callType = 'line';
+    let parsedDist = 0;
 
     if (line.toUpperCase().startsWith('CURVE')) {
-      // Parse curve
+      callType = 'curve';
       const curve = parseCurve(line, curX, curY, lastBearing);
       if (!curve) {
-        errors.push('Line ' + (i + 1) + ': Could not parse curve');
+        errors.push({ line: i, msg: 'Could not parse curve' });
+        callResults.push({ idx: i, text: line, status: 'error', msg: 'Parse failed', from: {x:curX,y:curY}, to: {x:curX,y:curY} });
         continue;
       }
-      // Add arc points for smooth curve
       for (const pt of curve.points) {
         verts.push(pt);
       }
       curX += curve.dx;
       curY += curve.dy;
       lastBearing = curve.exitBearing;
+      parsedDist = curve.arcLen;
+      ok = true;
     } else {
       // Parse bearing + distance
-      // Try to match: N/S dd°mm'ss" E/W dist
-      const distMatch = line.match(/([\d.]+)\s*[']?\s*$/);
+      const distMatch = line.match(/([\d.]+)\s*['\u2019]?\s*$/);
       if (!distMatch) {
-        errors.push('Line ' + (i + 1) + ': No distance found');
+        errors.push({ line: i, msg: 'No distance found' });
+        callResults.push({ idx: i, text: line, status: 'error', msg: 'No distance', from: {x:curX,y:curY}, to: {x:curX,y:curY} });
         continue;
       }
       const dist = parseFloat(distMatch[1]);
       const bearingStr = line.substring(0, line.length - distMatch[0].length).trim();
       const bearing = parseBearing(bearingStr);
       if (bearing === null) {
-        errors.push('Line ' + (i + 1) + ': Could not parse bearing "' + bearingStr + '"');
+        errors.push({ line: i, msg: 'Bad bearing: "' + bearingStr + '"' });
+        callResults.push({ idx: i, text: line, status: 'error', msg: 'Bad bearing', from: {x:curX,y:curY}, to: {x:curX,y:curY} });
         continue;
       }
       const dxy = bearingToXY(bearing, dist);
@@ -2082,11 +2202,23 @@ function plotFromMetes() {
       curY += dxy.dy;
       verts.push({ x: curX, y: curY });
       lastBearing = bearing;
+      parsedDist = dist;
+      ok = true;
     }
+
+    callResults.push({
+      idx: i, text: line, status: ok ? 'ok' : 'error',
+      type: callType, dist: parsedDist,
+      from: { x: startX, y: startY },
+      to: { x: curX, y: curY }
+    });
   }
 
+  state.metesCallSegments = callResults;
+
   if (verts.length < 3) {
-    showToast('Need at least 3 valid calls. ' + errors.join('; '), 'warning');
+    showToast('Need at least 3 valid calls. Check the Verify Calls list.', 'warning');
+    buildVerifyList(callResults, 0, 0);
     return;
   }
 
@@ -2103,14 +2235,81 @@ function plotFromMetes() {
   updateStats();
   zoomToFit();
 
-  let msg = 'Plotted ' + verts.length + ' points from metes & bounds';
+  buildVerifyList(callResults, closureDist, closureRatio);
+
+  let msg = 'Plotted ' + verts.length + ' points from ' + callResults.length + ' calls';
   if (closureDist > 0.5) {
-    msg += ' | Closure error: ' + closureDist.toFixed(2) + ' ft (1:' + Math.round(1 / closureRatio) + ')';
-  }
-  if (errors.length > 0) {
-    msg += ' | ' + errors.length + ' warning(s)';
+    msg += ' | Closure: ' + closureDist.toFixed(2) + ' ft (1:' + Math.round(1 / closureRatio) + ')';
   }
   showToast(msg, errors.length > 0 ? 'warning' : 'success');
+}
+
+function buildVerifyList(calls, closureDist, closureRatio) {
+  const list = document.getElementById('metesVerifyList');
+  const info = document.getElementById('metesClosureInfo');
+
+  if (closureDist > 0) {
+    const color = closureDist < 1 ? 'var(--color-success)' : closureDist < 5 ? 'var(--color-warning)' : 'var(--color-danger)';
+    info.innerHTML = '<span style="color:' + color + '">Closure: ' + closureDist.toFixed(2) +
+      ' ft (1:' + (closureRatio > 0 ? Math.round(1 / closureRatio) : '?') + ')</span>';
+  } else {
+    info.innerHTML = '';
+  }
+
+  list.innerHTML = calls.map((c, i) => {
+    const statusIcon = c.status === 'ok' ? '&#10003;' : '&#10007;';
+    const statusColor = c.status === 'ok' ? 'var(--color-success)' : 'var(--color-danger)';
+    const typeIcon = c.type === 'curve' ? '&#8635;' : '&#8594;';
+    return '<div class="vertex-item" style="cursor:pointer;" onclick="highlightCall(' + i + ')" ' +
+      'onmouseenter="highlightCall(' + i + ')" onmouseleave="highlightCall(-1)">' +
+      '<span class="v-index" style="color:' + statusColor + '">' + statusIcon + '</span>' +
+      '<span style="font-size:9px;margin-right:4px;">' + typeIcon + '</span>' +
+      '<span class="v-coords" style="font-size:9px;' + (c.status==='error' ? 'color:var(--color-danger)' : '') + '">' +
+      c.text.substring(0, 35) + (c.text.length > 35 ? '...' : '') +
+      (c.msg ? ' <span style="color:var(--color-danger)">(' + c.msg + ')</span>' : '') +
+      '</span></div>';
+  }).join('');
+}
+
+function highlightCall(idx) {
+  state.highlightedCallIdx = idx;
+  render();
+}
+
+// Draw highlighted segment on canvas
+function drawMetesHighlight() {
+  const idx = state.highlightedCallIdx;
+  if (idx < 0 || !state.metesCallSegments || idx >= state.metesCallSegments.length) return;
+  const seg = state.metesCallSegments[idx];
+  const [sx1, sy1] = worldToScreen(seg.from.x, seg.from.y);
+  const [sx2, sy2] = worldToScreen(seg.to.x, seg.to.y);
+
+  // Highlight line
+  ctx.strokeStyle = seg.status === 'ok' ? 'rgba(76, 175, 80, 0.9)' : 'rgba(244, 67, 54, 0.9)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(sx1, sy1);
+  ctx.lineTo(sx2, sy2);
+  ctx.stroke();
+
+  // Start dot (green)
+  ctx.beginPath();
+  ctx.arc(sx1, sy1, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#4CAF50';
+  ctx.fill();
+
+  // End dot (blue)
+  ctx.beginPath();
+  ctx.arc(sx2, sy2, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#2196F3';
+  ctx.fill();
+
+  // Label
+  const mx = (sx1 + sx2) / 2, my = (sy1 + sy2) / 2;
+  ctx.font = 'bold 11px Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText('Call #' + (idx + 1), mx, my - 10);
 }
 
 // ============================================
@@ -2151,23 +2350,48 @@ async function handlePlatScan(event) {
         body: JSON.stringify({
           model: model,
           max_tokens: 2048,
-          system: `You are a civil engineering survey data extractor. Extract ALL boundary line and curve data from this plat/survey image.
+          system: `You are an expert civil engineering survey data extractor with 30 years of experience reading plat maps, legal descriptions, and survey documents. Your job is to extract EVERY line and curve call from the boundary shown in this image with 100% accuracy.
 
-For each straight line, output exactly:
-BEARING DISTANCE
-Example: N 45°30'15" E 325.00
+OUTPUT FORMAT — follow EXACTLY:
 
-For each curve, output exactly:
-CURVE L/R R=radius L=arc_length D=delta_angle
-Example: CURVE L R=500.00 L=125.00 D=14°19'22"
+For straight lines:
+N DD°MM'SS" E DISTANCE
+(bearing in degrees-minutes-seconds, distance in feet as decimal)
 
-Rules:
-- Output ONLY the metes & bounds calls, one per line
-- Start from the Point of Beginning and go CLOCKWISE
-- Include ALL lines and curves in order
-- Use the exact format shown above — no extra text
-- Distances in feet, angles in degrees-minutes-seconds
-- L = left curve, R = right curve relative to direction of travel`,
+For curves, output ALL available curve data on one line:
+CURVE DIR R=radius L=arc_length D=delta_angle CH=chord_length CB=chord_bearing
+Where:
+  DIR = L (left/concave right) or R (right/concave left) relative to direction of travel
+  R = radius in feet
+  L = arc length in feet
+  D = delta/central angle in DMS format (DD°MM'SS")
+  CH = chord length in feet (if shown)
+  CB = chord bearing (if shown, e.g. N 45°30'00" E)
+
+CRITICAL RULES:
+1. Start at the Point of Beginning (POB) — note if one is labeled
+2. Follow the boundary CLOCKWISE (typical legal description direction)
+3. Extract EVERY segment — do NOT skip any lines or curves
+4. Read bearings EXACTLY as shown — do not round or estimate
+5. Read distances EXACTLY as shown — include all decimal places
+6. For curves: extract radius, arc length, delta angle, chord, AND chord bearing if any are shown
+7. Look for curve tables — plats often have a separate table listing curve data (C1, C2, etc.)
+8. Look for line tables — plats may have a separate table for line segments (L1, L2, etc.)
+9. If a segment references a table entry (e.g., "C1", "L3"), find that data in the table
+10. Output one call per line, in boundary traversal order
+11. After all calls, output a line: POB=X,Y if coordinates for POB are shown
+12. If you see a closure call back to POB, include it
+
+COMMON PLAT NOTATIONS:
+- N, S, E, W = cardinal directions for bearings
+- R = radius, L = arc length (or curve left), D or Δ = delta angle
+- CB = chord bearing, CH or C = chord length
+- T = tangent length
+- POB = Point of Beginning, POC = Point of Commencement
+- R/W = Right of Way
+- Bearings written as: N45°30'15"E or N 45° 30' 15" E (extract the same way)
+
+Do NOT output any explanatory text. Output ONLY the metes and bounds calls.`,
           messages: [{
             role: 'user',
             content: [
