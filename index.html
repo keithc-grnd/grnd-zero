@@ -1033,6 +1033,7 @@ input[type="range"]::-moz-range-thumb {
         <div class="input-tabs">
           <div class="input-tab active" onclick="switchInputTab('draw', this)">Draw</div>
           <div class="input-tab" onclick="switchInputTab('coords', this)">Coords</div>
+          <div class="input-tab" onclick="switchInputTab('metes', this)">M&amp;B</div>
           <div class="input-tab" onclick="switchInputTab('json', this)">JSON</div>
         </div>
 
@@ -1059,7 +1060,41 @@ input[type="range"]::-moz-range-thumb {
           <button class="btn btn-primary" onclick="plotFromCoords()">Plot Boundary</button>
         </div>
 
-        <!-- Tab 3: JSON Import -->
+        <!-- Tab 3: Metes & Bounds -->
+        <div class="input-panel" id="panel-metes">
+          <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.5;">
+            Enter bearing/distance calls, one per line.<br>
+            Format: <strong style="color:var(--text-label)">N 45°30'15" E 325.00</strong><br>
+            Curves: <strong style="color:var(--text-label)">CURVE L R=500 L=125 D=14°19'22"</strong>
+          </p>
+          <div class="form-row">
+            <label>Point of Beginning (X, Y ft)</label>
+            <div class="form-row-inline" style="margin-bottom:0;">
+              <div><input type="number" id="pobX" value="0" step="0.01" /></div>
+              <div><input type="number" id="pobY" value="0" step="0.01" /></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Metes &amp; Bounds Calls</label>
+            <textarea id="metesInput" rows="8" placeholder="N 45°30'15&quot; E 325.00&#10;S 88°12'00&quot; E 450.00&#10;CURVE L R=500 L=125 D=14°19'22&quot;&#10;S 01°15'30&quot; W 310.00&#10;N 89°45'00&quot; W 475.00"></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="plotFromMetes()">Plot Boundary</button>
+
+          <hr class="param-divider" />
+
+          <!-- AI Image Scan -->
+          <div class="param-group-label">Scan Plat Image (AI)</div>
+          <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.4;">
+            Upload a JPEG/PNG of a plat with bearings &amp; distances. Claude Vision will extract the data automatically.
+          </p>
+          <button class="btn" onclick="document.getElementById('platImageFile').click()">
+            Upload Plat Image
+          </button>
+          <input type="file" id="platImageFile" accept="image/*" style="display:none;" onchange="handlePlatScan(event)" />
+          <div id="platScanStatus" style="margin-top:6px; font-size:10px; color:var(--text-secondary);"></div>
+        </div>
+
+        <!-- Tab 4: JSON Import -->
         <div class="input-panel" id="panel-json">
           <p style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; line-height:1.5;">
             Drag & drop a <strong style="color:var(--text-label)">.json</strong> file with boundary array.
@@ -1907,6 +1942,271 @@ function plotFromCoords() {
   updateStats();
   zoomToFit();
   showToast('Plotted ' + verts.length + ' vertices from coordinates', 'success');
+}
+
+// ============================================
+// METES & BOUNDS INPUT
+// ============================================
+
+// Parse a DMS bearing string like "N 45°30'15\" E" into radians from north (clockwise)
+function parseBearing(str) {
+  str = str.trim().toUpperCase();
+  // Match: N/S dd°mm'ss" E/W
+  const m = str.match(/([NS])\s*(\d+)[°]\s*(\d+)[\']\s*([\d.]+)[\"]*\s*([EW])/);
+  if (!m) return null;
+  const ns = m[1], deg = parseFloat(m[2]), min = parseFloat(m[3]), sec = parseFloat(m[4]), ew = m[5];
+  let angle = deg + min / 60 + sec / 3600; // degrees from N or S
+  let radians;
+  if (ns === 'N' && ew === 'E') radians = angle * Math.PI / 180;
+  else if (ns === 'N' && ew === 'W') radians = -angle * Math.PI / 180;  // or 360 - angle
+  else if (ns === 'S' && ew === 'E') radians = Math.PI - angle * Math.PI / 180;
+  else if (ns === 'S' && ew === 'W') radians = Math.PI + angle * Math.PI / 180;
+  return radians; // angle from north, clockwise
+}
+
+// Convert bearing (radians from north CW) + distance to delta X, Y
+function bearingToXY(bearingRad, dist) {
+  // In engineering coords: X = east, Y = north
+  const dx = dist * Math.sin(bearingRad);
+  const dy = dist * Math.cos(bearingRad);
+  return { dx, dy };
+}
+
+// Parse curve data: "CURVE L R=500 L=125 D=14°19'22""
+// L/R = direction, R = radius, L = arc length, D = delta angle
+function parseCurve(str, lastX, lastY, lastBearing) {
+  str = str.trim().toUpperCase();
+  const dirMatch = str.match(/CURVE\s+([LR])/);
+  const rMatch = str.match(/R\s*=\s*([\d.]+)/);
+  const lMatch = str.match(/L\s*=\s*([\d.]+)/);
+  const dMatch = str.match(/D\s*=\s*(\d+)[°]\s*(\d+)[\']\s*([\d.]+)/);
+
+  if (!rMatch || !dMatch) return null;
+  const turnDir = dirMatch ? dirMatch[1] : 'L';
+  const radius = parseFloat(rMatch[1]);
+  const deltaD = parseFloat(dMatch[1]) + parseFloat(dMatch[2]) / 60 + parseFloat(dMatch[3]) / 3600;
+  const deltaRad = deltaD * Math.PI / 180;
+  const arcLen = lMatch ? parseFloat(lMatch[1]) : radius * deltaRad;
+
+  // Chord bearing and chord length
+  const halfDelta = deltaRad / 2;
+  const chord = 2 * radius * Math.sin(halfDelta);
+
+  // The chord bearing is the last bearing deflected by half the delta
+  let chordBearing;
+  if (turnDir === 'R') {
+    chordBearing = lastBearing + halfDelta;
+  } else {
+    chordBearing = lastBearing - halfDelta;
+  }
+
+  const dxy = bearingToXY(chordBearing, chord);
+
+  // Exit bearing
+  let exitBearing;
+  if (turnDir === 'R') {
+    exitBearing = lastBearing + deltaRad;
+  } else {
+    exitBearing = lastBearing - deltaRad;
+  }
+
+  // Generate arc points for smooth display
+  const numPts = Math.max(8, Math.ceil(deltaD / 3));
+  const points = [];
+  for (let i = 1; i <= numPts; i++) {
+    const frac = i / numPts;
+    const partialDelta = deltaRad * frac;
+    const partialHalf = partialDelta / 2;
+    const partialChord = 2 * radius * Math.sin(partialHalf);
+    let partialBearing;
+    if (turnDir === 'R') {
+      partialBearing = lastBearing + partialHalf;
+    } else {
+      partialBearing = lastBearing - partialHalf;
+    }
+    const pt = bearingToXY(partialBearing, partialChord);
+    points.push({ x: lastX + pt.dx, y: lastY + pt.dy });
+  }
+
+  return { dx: dxy.dx, dy: dxy.dy, exitBearing, points, arcLen };
+}
+
+function plotFromMetes() {
+  const raw = document.getElementById('metesInput').value.trim();
+  if (!raw) { showToast('No metes & bounds data entered', 'warning'); return; }
+
+  const pobX = parseFloat(document.getElementById('pobX').value) || 0;
+  const pobY = parseFloat(document.getElementById('pobY').value) || 0;
+
+  const lines = raw.split('\n').filter(l => l.trim());
+  const verts = [{ x: pobX, y: pobY }];
+  let curX = pobX, curY = pobY;
+  let lastBearing = 0;
+  let errors = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (line.toUpperCase().startsWith('CURVE')) {
+      // Parse curve
+      const curve = parseCurve(line, curX, curY, lastBearing);
+      if (!curve) {
+        errors.push('Line ' + (i + 1) + ': Could not parse curve');
+        continue;
+      }
+      // Add arc points for smooth curve
+      for (const pt of curve.points) {
+        verts.push(pt);
+      }
+      curX += curve.dx;
+      curY += curve.dy;
+      lastBearing = curve.exitBearing;
+    } else {
+      // Parse bearing + distance
+      // Try to match: N/S dd°mm'ss" E/W dist
+      const distMatch = line.match(/([\d.]+)\s*[']?\s*$/);
+      if (!distMatch) {
+        errors.push('Line ' + (i + 1) + ': No distance found');
+        continue;
+      }
+      const dist = parseFloat(distMatch[1]);
+      const bearingStr = line.substring(0, line.length - distMatch[0].length).trim();
+      const bearing = parseBearing(bearingStr);
+      if (bearing === null) {
+        errors.push('Line ' + (i + 1) + ': Could not parse bearing "' + bearingStr + '"');
+        continue;
+      }
+      const dxy = bearingToXY(bearing, dist);
+      curX += dxy.dx;
+      curY += dxy.dy;
+      verts.push({ x: curX, y: curY });
+      lastBearing = bearing;
+    }
+  }
+
+  if (verts.length < 3) {
+    showToast('Need at least 3 valid calls. ' + errors.join('; '), 'warning');
+    return;
+  }
+
+  // Check closure
+  const closureDist = Math.hypot(verts[verts.length - 1].x - verts[0].x, verts[verts.length - 1].y - verts[0].y);
+  const perim = calcPerimeter(verts);
+  const closureRatio = perim > 0 ? closureDist / perim : 0;
+
+  state.vertices = verts;
+  state.isClosed = true;
+  state.isDrawing = false;
+  document.getElementById('statusMode').textContent = 'Idle';
+  document.getElementById('statusMsg').textContent = 'Boundary defined (M&B)';
+  updateStats();
+  zoomToFit();
+
+  let msg = 'Plotted ' + verts.length + ' points from metes & bounds';
+  if (closureDist > 0.5) {
+    msg += ' | Closure error: ' + closureDist.toFixed(2) + ' ft (1:' + Math.round(1 / closureRatio) + ')';
+  }
+  if (errors.length > 0) {
+    msg += ' | ' + errors.length + ' warning(s)';
+  }
+  showToast(msg, errors.length > 0 ? 'warning' : 'success');
+}
+
+// ============================================
+// PLAT IMAGE SCAN (Claude Vision API)
+// ============================================
+async function handlePlatScan(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) {
+    showToast('Enter your Claude API key in the AI Assistant panel first', 'warning');
+    return;
+  }
+
+  const statusEl = document.getElementById('platScanStatus');
+  statusEl.innerHTML = '<span class="ai-spinner"></span> Scanning plat image...';
+
+  // Read image as base64
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    const dataUrl = ev.target.result;
+    const base64 = dataUrl.split(',')[1];
+    const mimeType = dataUrl.match(/data:(.*?);/)[1];
+
+    const model = document.getElementById('aiModel').value;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: model,
+          max_tokens: 2048,
+          system: `You are a civil engineering survey data extractor. Extract ALL boundary line and curve data from this plat/survey image.
+
+For each straight line, output exactly:
+BEARING DISTANCE
+Example: N 45°30'15" E 325.00
+
+For each curve, output exactly:
+CURVE L/R R=radius L=arc_length D=delta_angle
+Example: CURVE L R=500.00 L=125.00 D=14°19'22"
+
+Rules:
+- Output ONLY the metes & bounds calls, one per line
+- Start from the Point of Beginning and go CLOCKWISE
+- Include ALL lines and curves in order
+- Use the exact format shown above — no extra text
+- Distances in feet, angles in degrees-minutes-seconds
+- L = left curve, R = right curve relative to direction of travel`,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mimeType,
+                  data: base64
+                }
+              },
+              {
+                type: 'text',
+                text: 'Extract all bearing/distance and curve data from this plat image. Output only the metes and bounds calls in the exact format specified.'
+              }
+            ]
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error?.message || 'API error ' + response.status);
+      }
+
+      const data = await response.json();
+      const extracted = data.content[0].text;
+
+      // Put extracted data into the metes input
+      document.getElementById('metesInput').value = extracted;
+      statusEl.innerHTML = '<span style="color:var(--color-success);">Scan complete — review and click Plot Boundary</span>';
+      showToast('Plat scanned — ' + extracted.split('\n').filter(l => l.trim()).length + ' calls extracted. Review and plot.', 'success');
+
+    } catch (err) {
+      statusEl.innerHTML = '<span style="color:var(--color-danger);">Scan failed: ' + err.message + '</span>';
+      showToast('Scan error: ' + err.message, 'error');
+    }
+  };
+  reader.readAsDataURL(file);
 }
 
 // ============================================
