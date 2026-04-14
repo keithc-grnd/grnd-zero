@@ -2140,9 +2140,118 @@ function parseCurve(str, lastX, lastY, lastBearing) {
 state.metesCallSegments = [];
 state.highlightedCallIdx = -1;
 
+// ============================================
+// CLOCKWISE ENFORCEMENT
+// ============================================
+
+// Reverse a bearing by 180°: N↔S, E↔W
+function reverseBearing(bearingStr) {
+  let s = bearingStr.trim();
+  // Swap N↔S at start
+  if (s.startsWith('N')) s = 'S' + s.substring(1);
+  else if (s.startsWith('N')) s = 'S' + s.substring(1);
+  else if (s.startsWith('S')) s = 'N' + s.substring(1);
+  // Swap E↔W at end
+  if (s.endsWith('E')) s = s.substring(0, s.length - 1) + 'W';
+  else if (s.endsWith("E'")) s = s.substring(0, s.length - 2) + "W'";
+  else if (s.endsWith('W')) s = s.substring(0, s.length - 1) + 'E';
+  else if (s.endsWith("W'")) s = s.substring(0, s.length - 2) + "E'";
+  return s;
+}
+
+// Reverse a full metes & bounds call line
+// Lines: "N 45°30'15" E 325.00" → "S 45°30'15" W 325.00"
+// Curves: "CURVE L ..." → "CURVE R ..." (and vice versa)
+function reverseCallLine(line) {
+  line = line.trim();
+  if (line.toUpperCase().startsWith('CURVE')) {
+    // Swap L↔R direction
+    if (/CURVE\s+L/i.test(line)) {
+      line = line.replace(/CURVE\s+L/i, 'CURVE R');
+    } else if (/CURVE\s+R/i.test(line)) {
+      line = line.replace(/CURVE\s+R/i, 'CURVE L');
+    }
+    // Reverse chord bearing if present
+    const cbMatch = line.match(/(CB\s*=\s*)([NS][^EW]*[EW])/i);
+    if (cbMatch) {
+      line = line.replace(cbMatch[2], reverseBearing(cbMatch[2]));
+    }
+    return line;
+  }
+  // Regular bearing/distance line
+  // Split into bearing part and distance part
+  const distMatch = line.match(/([\d.]+)\s*['\u2019]?\s*$/);
+  if (!distMatch) return line;
+  const dist = distMatch[0];
+  const bearingPart = line.substring(0, line.length - dist.length).trim();
+  return reverseBearing(bearingPart) + ' ' + dist.trim();
+}
+
+// Check if a polygon winds clockwise (in engineering coords, Y-up)
+// Returns true if clockwise
+function isClockwise(verts) {
+  let sum = 0;
+  for (let i = 0; i < verts.length; i++) {
+    const j = (i + 1) % verts.length;
+    sum += (verts[j].x - verts[i].x) * (verts[j].y + verts[i].y);
+  }
+  return sum > 0; // positive = clockwise in Y-up coordinate system
+}
+
+// Auto-correct metes & bounds calls to produce clockwise winding
+// If the parsed polygon is counterclockwise, reverse all calls
+function ensureClockwise(rawText) {
+  // First, do a quick parse to get vertices
+  const lines = rawText.split('\n').filter(l => l.trim() && !l.trim().toUpperCase().startsWith('POB') && !l.trim().startsWith('#'));
+  const verts = [{ x: 0, y: 0 }];
+  let curX = 0, curY = 0, lastBearing = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.toUpperCase().startsWith('CURVE')) {
+      const curve = parseCurve(trimmed, curX, curY, lastBearing);
+      if (curve) {
+        curX += curve.dx; curY += curve.dy;
+        verts.push({ x: curX, y: curY });
+        lastBearing = curve.exitBearing;
+      }
+    } else {
+      const distMatch = trimmed.match(/([\d.]+)\s*['\u2019]?\s*$/);
+      if (!distMatch) continue;
+      const dist = parseFloat(distMatch[1]);
+      const bearingStr = trimmed.substring(0, trimmed.length - distMatch[0].length).trim();
+      const bearing = parseBearing(bearingStr);
+      if (bearing === null) continue;
+      const dxy = bearingToXY(bearing, dist);
+      curX += dxy.dx; curY += dxy.dy;
+      verts.push({ x: curX, y: curY });
+      lastBearing = bearing;
+    }
+  }
+
+  if (verts.length < 3) return { text: rawText, reversed: false };
+
+  if (isClockwise(verts)) {
+    return { text: rawText, reversed: false };
+  }
+
+  // Not clockwise — reverse all calls: reverse order AND flip each bearing
+  const reversedLines = lines.map(l => reverseCallLine(l)).reverse();
+  return { text: reversedLines.join('\n'), reversed: true };
+}
+
 function plotFromMetes() {
-  const raw = document.getElementById('metesInput').value.trim();
+  let raw = document.getElementById('metesInput').value.trim();
   if (!raw) { showToast('No metes & bounds data entered', 'warning'); return; }
+
+  // AUTO-ENFORCE CLOCKWISE WINDING
+  const cwCheck = ensureClockwise(raw);
+  if (cwCheck.reversed) {
+    raw = cwCheck.text;
+    document.getElementById('metesInput').value = raw;
+    showToast('Bearings auto-reversed to enforce clockwise winding', 'info');
+  }
 
   const pobX = parseFloat(document.getElementById('pobX').value) || 0;
   const pobY = parseFloat(document.getElementById('pobY').value) || 0;
@@ -2405,7 +2514,7 @@ Do NOT output any explanatory text. Output ONLY the metes and bounds calls.`,
               },
               {
                 type: 'text',
-                text: 'Extract all bearing/distance and curve data from this plat image. Output only the metes and bounds calls in the exact format specified.'
+                text: 'Extract all bearing/distance and curve data from this plat image. Output only the metes and bounds calls in the exact format specified. IMPORTANT: Output the calls in CLOCKWISE traverse order starting from the northwest corner or Point of Beginning. If the plat shows bearings for counterclockwise direction, reverse them (swap N↔S and E↔W) so the traverse goes clockwise.'
               }
             ]
           }]
@@ -2422,7 +2531,7 @@ Do NOT output any explanatory text. Output ONLY the metes and bounds calls.`,
 
       // Put extracted data into the metes input
       document.getElementById('metesInput').value = extracted;
-      statusEl.innerHTML = '<span style="color:var(--color-success);">Scan complete — review and click Plot Boundary</span>';
+      statusEl.innerHTML = '<span style="color:var(--color-success);">Scan complete — click Plot Boundary (clockwise winding auto-enforced)</span>';
       showToast('Plat scanned — ' + extracted.split('\n').filter(l => l.trim()).length + ' calls extracted. Review and plot.', 'success');
 
     } catch (err) {
