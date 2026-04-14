@@ -4232,6 +4232,39 @@ function drawStreets() {
         ctx.fillText('R=' + cds.rowRadius + '\' ROW', scx, scy + rowR + 14);
         const typeLabel = cds.type === 'offset' ? 'Std 800A' : 'Std 800';
         ctx.fillText(typeLabel, scx, scy + rowR + 25);
+        // Throat length D
+        if (cds.throatLength) {
+          ctx.fillText('D=' + cds.throatLength.toFixed(1) + "'", scx, scy + rowR + 36);
+        }
+        // Throat width
+        ctx.font = '8px Consolas, monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.fillText('ROW ' + (cds.throatWidth || 37) + "'", scx, scy - rowR - 8);
+      }
+
+      // Draw throat paved surface fill
+      if (cds.direction) {
+        const dir = cds.direction;
+        const tnx = -dir.y, tny = dir.x;
+        const halfThroat = (cds.throatWidth || 37) / 2;
+        const pavedHalf = halfThroat - 0.5;
+        const tLen = cds.throatLength || 86;
+        const tsX = cds.center.x - dir.x * cds.rowRadius;
+        const tsY = cds.center.y - dir.y * cds.rowRadius;
+        const teX = tsX - dir.x * tLen;
+        const teY = tsY - dir.y * tLen;
+
+        // Curb lines (paved edge)
+        for (const side of [1, -1]) {
+          const [px1, py1] = worldToScreen(teX + tnx*pavedHalf*side, teY + tny*pavedHalf*side);
+          const [px2, py2] = worldToScreen(tsX + tnx*pavedHalf*side, tsY + tny*pavedHalf*side);
+          ctx.strokeStyle = 'rgba(255, 217, 61, 0.5)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(px1, py1);
+          ctx.lineTo(px2, py2);
+          ctx.stroke();
+        }
       }
     }
   }
