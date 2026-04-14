@@ -804,6 +804,111 @@ input[type="range"]::-moz-range-thumb {
 .api-key-input:focus {
   border-color: var(--input-focus);
 }
+
+/* ========================================
+   PLANNING AREAS
+   ======================================== */
+.planning-area-item {
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.planning-area-item .pa-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.planning-area-item .pa-info {
+  flex: 1;
+}
+
+.planning-area-item .pa-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.planning-area-item .pa-detail {
+  font-size: 9px;
+  color: var(--text-secondary);
+  font-family: 'Consolas', monospace;
+}
+
+.planning-area-item .pa-delete {
+  color: var(--color-danger);
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 13px;
+}
+
+.planning-area-item .pa-delete:hover {
+  opacity: 1;
+}
+
+/* ========================================
+   SCENARIO TABS
+   ======================================== */
+.scenario-tabs {
+  display: flex;
+  gap: 2px;
+  background: #161616;
+  border-radius: 4px;
+  padding: 2px;
+  margin-bottom: 10px;
+}
+
+.scenario-tab {
+  flex: 1;
+  padding: 6px 4px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.scenario-tab:hover {
+  color: var(--text-primary);
+  background: #2A2A2A;
+}
+
+.scenario-tab.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* Background image controls */
+.bg-image-preview {
+  width: 100%;
+  height: 60px;
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.bg-image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  opacity: 0.7;
+}
 </style>
 </head>
 <body>
@@ -856,6 +961,64 @@ input[type="range"]::-moz-range-thumb {
             <option value="both" selected>Grid + Vertex</option>
           </select>
         </div>
+      </div>
+    </div>
+
+    <!-- Scenarios & Project Save -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Scenarios &amp; Project</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="scenario-tabs">
+          <div class="scenario-tab active" onclick="switchScenario(0, this)">Scenario A</div>
+          <div class="scenario-tab" onclick="switchScenario(1, this)">Scenario B</div>
+          <div class="scenario-tab" onclick="switchScenario(2, this)">Scenario C</div>
+        </div>
+        <div class="btn-group">
+          <button class="btn" onclick="saveProject()">Save Project</button>
+          <button class="btn" onclick="loadProject()">Load Project</button>
+        </div>
+        <div class="btn-group" style="margin-top:4px;">
+          <button class="btn" onclick="duplicateScenario()">Duplicate to Next</button>
+        </div>
+        <input type="file" id="loadProjectFile" accept=".grnd,.json" style="display:none;" onchange="handleLoadProject(event)" />
+      </div>
+    </div>
+
+    <!-- Background Image -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Background Image</h3>
+      </div>
+      <div class="panel-section-body">
+        <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.4;">
+          Import a screenshot from Google Maps or aerial photo as a background reference.
+        </p>
+        <button class="btn" onclick="document.getElementById('bgImageFile').click()">Import Image</button>
+        <input type="file" id="bgImageFile" accept="image/*" style="display:none;" onchange="handleBgImage(event)" />
+        <div class="form-row" style="margin-top:8px;">
+          <label>Image Opacity</label>
+          <div class="range-row">
+            <input type="range" id="bgOpacity" min="0" max="100" step="5" value="30"
+                   oninput="state.bgOpacity=this.value/100; document.getElementById('bgOpVal').textContent=this.value+'%'; render();" />
+            <span class="range-value" id="bgOpVal">30%</span>
+          </div>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Scale (%)</label>
+            <input type="number" id="bgScale" value="100" min="10" max="500" step="5" onchange="state.bgScale=this.value/100; render();" />
+          </div>
+          <div>
+            <label>Rotation (°)</label>
+            <input type="number" id="bgRotation" value="0" min="-180" max="180" step="1" onchange="state.bgRotation=this.value; render();" />
+          </div>
+        </div>
+        <button class="btn btn-danger" onclick="clearBgImage()" style="margin-top:4px;">Remove Image</button>
+        <div class="bg-image-preview" id="bgPreview">No image loaded</div>
       </div>
     </div>
 
@@ -947,6 +1110,63 @@ input[type="range"]::-moz-range-thumb {
             No vertices defined
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Planning Areas -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Planning Areas</h3>
+      </div>
+      <div class="panel-section-body">
+        <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.4;">
+          Divide site into sub-areas with independent density targets.<br>
+          Click <strong style="color:var(--text-label)">Draw Area</strong> then click on canvas to define.
+        </p>
+        <div class="form-row-inline">
+          <div>
+            <label>Area Name</label>
+            <input type="text" id="paName" value="Area 1" />
+          </div>
+          <div>
+            <label>Target (du/ac)</label>
+            <input type="number" id="paDensity" value="6" min="1" max="30" step="0.5" />
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="startDrawPlanningArea()" id="btnDrawPA">Draw Area</button>
+        <div id="planningAreaList" style="margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <!-- Print -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Print</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="form-row-inline">
+          <div>
+            <label>Paper Size</label>
+            <select id="printSize">
+              <option value="letter">Letter (8.5x11)</option>
+              <option value="tabloid">Tabloid (11x17)</option>
+              <option value="arch-d" selected>Arch D (24x36)</option>
+            </select>
+          </div>
+          <div>
+            <label>Print Scale</label>
+            <select id="printScale">
+              <option value="30">1" = 30'</option>
+              <option value="40">1" = 40'</option>
+              <option value="50" selected>1" = 50'</option>
+              <option value="60">1" = 60'</option>
+              <option value="100">1" = 100'</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="printPDF()">Print / Save PDF</button>
       </div>
     </div>
 
@@ -1523,7 +1743,9 @@ function drawBoundary() {
 // ============================================
 function render() {
   ctx.clearRect(0, 0, W, H);
+  if (typeof drawBgImage === 'function') drawBgImage();
   drawGrid();
+  if (typeof drawPlanningAreas === 'function') drawPlanningAreas();
   drawBufferedBoundary();
   drawStreets();
   drawLots();
@@ -3926,8 +4148,434 @@ async function askAI() {
 }
 
 // ============================================
+// PLANNING AREAS
+// ============================================
+state.planningAreas = [];
+state.drawingPA = false;
+state.currentPA = [];
+
+const PA_COLORS = [
+  'rgba(255,107,107,0.25)', 'rgba(78,205,196,0.25)', 'rgba(69,183,209,0.25)',
+  'rgba(255,217,61,0.25)', 'rgba(163,134,255,0.25)', 'rgba(76,175,80,0.25)'
+];
+
+function startDrawPlanningArea() {
+  if (!state.isClosed) { showToast('Define a site boundary first', 'warning'); return; }
+  state.drawingPA = true;
+  state.currentPA = [];
+  document.getElementById('btnDrawPA').textContent = 'Drawing... (dbl-click to close)';
+  document.getElementById('btnDrawPA').disabled = true;
+  document.getElementById('canvas-hint').textContent = 'Click to draw planning area boundary — Double-click to close';
+  showToast('Click on canvas to draw planning area', 'info');
+}
+
+function closePlanningArea() {
+  if (state.currentPA.length < 3) {
+    showToast('Need at least 3 points', 'warning');
+    state.drawingPA = false;
+    document.getElementById('btnDrawPA').textContent = 'Draw Area';
+    document.getElementById('btnDrawPA').disabled = false;
+    return;
+  }
+  const pa = {
+    name: document.getElementById('paName').value || ('Area ' + (state.planningAreas.length + 1)),
+    targetDensity: parseFloat(document.getElementById('paDensity').value) || 6,
+    polygon: state.currentPA.slice(),
+    color: PA_COLORS[state.planningAreas.length % PA_COLORS.length],
+    area: polygonArea(state.currentPA)
+  };
+  state.planningAreas.push(pa);
+  state.currentPA = [];
+  state.drawingPA = false;
+  document.getElementById('btnDrawPA').textContent = 'Draw Area';
+  document.getElementById('btnDrawPA').disabled = false;
+  document.getElementById('paName').value = 'Area ' + (state.planningAreas.length + 1);
+  updatePlanningAreaList();
+  render();
+  showToast('Planning area "' + pa.name + '" added: ' + (pa.area / 43560).toFixed(2) + ' acres', 'success');
+}
+
+function deletePlanningArea(idx) {
+  state.planningAreas.splice(idx, 1);
+  updatePlanningAreaList();
+  render();
+}
+
+function updatePlanningAreaList() {
+  const list = document.getElementById('planningAreaList');
+  if (state.planningAreas.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = state.planningAreas.map((pa, i) =>
+    '<div class="planning-area-item">' +
+    '<div class="pa-color" style="background:' + pa.color.replace('0.25', '0.8') + '"></div>' +
+    '<div class="pa-info"><div class="pa-name">' + pa.name + '</div>' +
+    '<div class="pa-detail">' + (pa.area / 43560).toFixed(2) + ' ac | Target: ' + pa.targetDensity + ' du/ac</div></div>' +
+    '<span class="pa-delete" onclick="deletePlanningArea(' + i + ')">&#10005;</span></div>'
+  ).join('');
+}
+
+function drawPlanningAreas() {
+  // Draw completed areas
+  for (const pa of state.planningAreas) {
+    if (pa.polygon.length < 3) continue;
+    ctx.beginPath();
+    const [fx, fy] = worldToScreen(pa.polygon[0].x, pa.polygon[0].y);
+    ctx.moveTo(fx, fy);
+    for (let i = 1; i < pa.polygon.length; i++) {
+      const [sx, sy] = worldToScreen(pa.polygon[i].x, pa.polygon[i].y);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+    ctx.fillStyle = pa.color;
+    ctx.fill();
+    ctx.strokeStyle = pa.color.replace('0.25', '0.7');
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Label
+    let cx = 0, cy = 0;
+    for (const p of pa.polygon) { cx += p.x; cy += p.y; }
+    cx /= pa.polygon.length; cy /= pa.polygon.length;
+    const [lx, ly] = worldToScreen(cx, cy);
+    ctx.font = 'bold 12px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = pa.color.replace('0.25', '0.9');
+    ctx.fillText(pa.name, lx, ly - 6);
+    ctx.font = '10px Consolas, monospace';
+    ctx.fillText(pa.targetDensity + ' du/ac', lx, ly + 8);
+  }
+
+  // Draw in-progress area
+  if (state.drawingPA && state.currentPA.length > 0) {
+    ctx.beginPath();
+    const [fx, fy] = worldToScreen(state.currentPA[0].x, state.currentPA[0].y);
+    ctx.moveTo(fx, fy);
+    for (let i = 1; i < state.currentPA.length; i++) {
+      const [sx, sy] = worldToScreen(state.currentPA[i].x, state.currentPA[i].y);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.strokeStyle = 'rgba(163,134,255,0.7)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of state.currentPA) {
+      const [sx, sy] = worldToScreen(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#A386FF';
+      ctx.fill();
+    }
+  }
+}
+
+// ============================================
+// SCENARIO MANAGER
+// ============================================
+state.scenarios = [null, null, null];
+state.activeScenario = 0;
+
+function getScenarioSnapshot() {
+  return {
+    vertices: JSON.parse(JSON.stringify(state.vertices)),
+    isClosed: state.isClosed,
+    planningAreas: JSON.parse(JSON.stringify(state.planningAreas)),
+    lots: JSON.parse(JSON.stringify(state.lots)),
+    streets: state.streets.map(s => ({
+      centerline: s.centerline, rowLeft: s.rowLeft, rowRight: s.rowRight,
+      isPrimary: s.isPrimary, _name: s._name
+    })),
+    culdesacs: JSON.parse(JSON.stringify(state.culdesacs)),
+    knuckles: JSON.parse(JSON.stringify(state.knuckles)),
+    bufferedBoundary: JSON.parse(JSON.stringify(state.bufferedBoundary)),
+    params: getDesignParams()
+  };
+}
+
+function applyScenarioSnapshot(snap) {
+  if (!snap) return;
+  state.vertices = snap.vertices || [];
+  state.isClosed = snap.isClosed || false;
+  state.planningAreas = snap.planningAreas || [];
+  state.lots = snap.lots || [];
+  state.streets = snap.streets || [];
+  state.culdesacs = snap.culdesacs || [];
+  state.knuckles = snap.knuckles || [];
+  state.bufferedBoundary = snap.bufferedBoundary || [];
+  // Restore params to UI
+  if (snap.params) {
+    const p = snap.params;
+    document.getElementById('layoutPattern').value = p.layoutPattern || 'grid';
+    document.getElementById('rowWidth').value = p.rowWidth || 37;
+    document.getElementById('roadwayWidth').value = p.roadwayWidth || 36;
+    document.getElementById('minLotWidth').value = p.minLotWidth || 60;
+    document.getElementById('minLotDepth').value = p.minLotDepth || 100;
+    document.getElementById('minLotArea').value = p.minLotArea || 7200;
+    document.getElementById('perimeterSetback').value = p.perimeterSetback || 20;
+    document.getElementById('streetOrientation').value = p.streetOrientation || 0;
+    document.getElementById('orientVal').textContent = (p.streetOrientation || 0) + '°';
+  }
+  updateStats();
+  updatePlanningAreaList();
+  render();
+}
+
+function switchScenario(idx, tabEl) {
+  // Save current scenario
+  state.scenarios[state.activeScenario] = getScenarioSnapshot();
+  // Switch
+  state.activeScenario = idx;
+  document.querySelectorAll('.scenario-tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  // Load target scenario
+  if (state.scenarios[idx]) {
+    applyScenarioSnapshot(state.scenarios[idx]);
+    showToast('Switched to Scenario ' + ['A','B','C'][idx], 'info');
+  } else {
+    showToast('Scenario ' + ['A','B','C'][idx] + ' is empty — starting fresh', 'info');
+  }
+  render();
+}
+
+function duplicateScenario() {
+  const snap = getScenarioSnapshot();
+  const nextIdx = (state.activeScenario + 1) % 3;
+  state.scenarios[nextIdx] = JSON.parse(JSON.stringify(snap));
+  showToast('Duplicated to Scenario ' + ['A','B','C'][nextIdx], 'success');
+}
+
+// ============================================
+// SAVE / LOAD PROJECT (.grnd)
+// ============================================
+function saveProject() {
+  // Save current scenario first
+  state.scenarios[state.activeScenario] = getScenarioSnapshot();
+  const project = {
+    version: '1.0',
+    appName: 'GRND ZERO Civil Subdivision Site Planner',
+    projectName: document.getElementById('projectName').value,
+    savedAt: new Date().toISOString(),
+    activeScenario: state.activeScenario,
+    scenarios: state.scenarios,
+    planningAreas: state.planningAreas,
+    bgImage: state.bgImageData || null,
+    bgOpacity: state.bgOpacity,
+    bgScale: state.bgScale,
+    bgRotation: state.bgRotation
+  };
+  const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.download = (document.getElementById('projectName').value || 'project').replace(/\s+/g, '_') + '.grnd';
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  showToast('Project saved as .grnd file', 'success');
+}
+
+function loadProject() {
+  document.getElementById('loadProjectFile').click();
+}
+
+function handleLoadProject(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const project = JSON.parse(ev.target.result);
+      if (project.projectName) document.getElementById('projectName').value = project.projectName;
+      state.scenarios = project.scenarios || [null, null, null];
+      state.activeScenario = project.activeScenario || 0;
+      state.planningAreas = project.planningAreas || [];
+      if (project.bgImage) {
+        state.bgImageData = project.bgImage;
+        state.bgOpacity = project.bgOpacity || 0.3;
+        state.bgScale = project.bgScale || 1;
+        state.bgRotation = project.bgRotation || 0;
+        loadBgFromData(project.bgImage);
+      }
+      // Load active scenario
+      if (state.scenarios[state.activeScenario]) {
+        applyScenarioSnapshot(state.scenarios[state.activeScenario]);
+      }
+      // Update scenario tab highlight
+      document.querySelectorAll('.scenario-tab').forEach((t, i) => {
+        t.classList.toggle('active', i === state.activeScenario);
+      });
+      showToast('Project loaded: ' + (project.projectName || file.name), 'success');
+    } catch (err) {
+      showToast('Error loading project: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// ============================================
+// BACKGROUND IMAGE (Google Maps / Aerial)
+// ============================================
+state.bgImage = null;
+state.bgImageData = null;
+state.bgOpacity = 0.3;
+state.bgScale = 1;
+state.bgRotation = 0;
+
+function handleBgImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    state.bgImageData = ev.target.result;
+    loadBgFromData(ev.target.result);
+    showToast('Background image loaded', 'success');
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+}
+
+function loadBgFromData(dataUrl) {
+  const img = new Image();
+  img.onload = () => {
+    state.bgImage = img;
+    document.getElementById('bgPreview').innerHTML = '<img src="' + dataUrl + '" />';
+    render();
+  };
+  img.src = dataUrl;
+}
+
+function clearBgImage() {
+  state.bgImage = null;
+  state.bgImageData = null;
+  document.getElementById('bgPreview').innerHTML = 'No image loaded';
+  render();
+}
+
+function drawBgImage() {
+  if (!state.bgImage) return;
+  const img = state.bgImage;
+  ctx.save();
+  ctx.globalAlpha = state.bgOpacity;
+  const scale = state.bgScale * state.zoom;
+  const imgW = img.width * scale / state.scale;
+  const imgH = img.height * scale / state.scale;
+  // Center on canvas, apply pan
+  const cx = W / 2 + state.panX;
+  const cy = H / 2 + state.panY;
+  ctx.translate(cx, cy);
+  ctx.rotate((state.bgRotation || 0) * Math.PI / 180);
+  ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
+  ctx.restore();
+}
+
+// ============================================
+// PRINT TO PDF
+// ============================================
+function printPDF() {
+  const sizes = {
+    'letter': { w: 8.5, h: 11 },
+    'tabloid': { w: 11, h: 17 },
+    'arch-d': { w: 24, h: 36 }
+  };
+  const size = sizes[document.getElementById('printSize').value] || sizes['arch-d'];
+  const printScale = parseInt(document.getElementById('printScale').value) || 50;
+  const dpi = 150;
+
+  // Create a print canvas
+  const printW = Math.round(size.w * dpi);
+  const printH = Math.round(size.h * dpi);
+  const printCanvas = document.createElement('canvas');
+  printCanvas.width = printW;
+  printCanvas.height = printH;
+  const printCtx = printCanvas.getContext('2d');
+
+  // White background
+  printCtx.fillStyle = '#FFFFFF';
+  printCtx.fillRect(0, 0, printW, printH);
+
+  // Title block
+  printCtx.fillStyle = '#000000';
+  printCtx.font = 'bold 24px Segoe UI, sans-serif';
+  printCtx.textAlign = 'left';
+  printCtx.fillText(document.getElementById('projectName').value || 'Subdivision Concept', 40, 40);
+  printCtx.font = '14px Segoe UI, sans-serif';
+  printCtx.fillText('Scale: 1" = ' + printScale + "'  |  Date: " + new Date().toLocaleDateString(), 40, 65);
+  printCtx.fillText('GRND ZERO Civil Subdivision Site Planner', 40, 85);
+
+  // Draw main canvas content scaled to fit
+  const margin = 100;
+  const availW = printW - margin * 2;
+  const availH = printH - margin * 2 - 60;
+  const canvasAspect = W / H;
+  const availAspect = availW / availH;
+  let drawW, drawH;
+  if (canvasAspect > availAspect) {
+    drawW = availW;
+    drawH = availW / canvasAspect;
+  } else {
+    drawH = availH;
+    drawW = availH * canvasAspect;
+  }
+  printCtx.drawImage(canvas, margin, margin + 60, drawW, drawH);
+
+  // Border
+  printCtx.strokeStyle = '#000000';
+  printCtx.lineWidth = 2;
+  printCtx.strokeRect(20, 20, printW - 40, printH - 40);
+
+  // Yield summary in corner
+  if (state.lots.length > 0) {
+    const sx = printW - 300, sy = printH - 120;
+    printCtx.fillStyle = '#000000';
+    printCtx.font = 'bold 12px Consolas, monospace';
+    printCtx.textAlign = 'left';
+    printCtx.fillText('YIELD SUMMARY', sx, sy);
+    printCtx.font = '11px Consolas, monospace';
+    printCtx.fillText('Total Lots: ' + state.lots.length, sx, sy + 18);
+    printCtx.fillText('Compliant: ' + state.lots.filter(l => l.compliant).length, sx, sy + 33);
+    printCtx.fillText('Density: ' + document.getElementById('yieldDensity').textContent + ' du/ac', sx, sy + 48);
+    printCtx.fillText('Avg Lot: ' + document.getElementById('yieldLotArea').textContent + ' sf', sx, sy + 63);
+  }
+
+  // Open print dialog
+  const printWin = window.open('', '_blank');
+  printWin.document.write('<html><head><title>Print - ' +
+    (document.getElementById('projectName').value || 'Subdivision') +
+    '</title><style>@media print{body{margin:0}img{width:100%;height:auto}}</style></head><body>' +
+    '<img src="' + printCanvas.toDataURL('image/png') + '" />' +
+    '</body></html>');
+  printWin.document.close();
+  printWin.focus();
+  setTimeout(() => printWin.print(), 500);
+  showToast('Print dialog opened — Save as PDF from browser print menu', 'success');
+}
+
+// ============================================
 // INIT
 // ============================================
+
+// Intercept canvas clicks for planning area drawing
+canvas.addEventListener('click', function(e) {
+  if (state.drawingPA) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    let [wx, wy] = screenToWorld(sx, sy);
+    [wx, wy] = snapToGrid(wx, wy);
+    state.currentPA.push({ x: wx, y: wy });
+    render();
+  }
+}, true);
+
+canvas.addEventListener('dblclick', function(e) {
+  if (state.drawingPA) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (state.currentPA.length > 3) state.currentPA.pop();
+    closePlanningArea();
+  }
+}, true);
+
 resizeCanvas();
 </script>
 
