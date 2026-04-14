@@ -609,6 +609,96 @@ textarea {
   from { transform: translateX(0); opacity: 1; }
   to { transform: translateX(100%); opacity: 0; }
 }
+
+/* ========================================
+   RANGE SLIDER — Custom styled
+   ======================================== */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--input-border);
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--color-accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--color-accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+
+/* Range with value display */
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-row input[type="range"] {
+  flex: 1;
+}
+
+.range-row .range-value {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--color-bearing);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Computed / display-only field */
+.computed-field {
+  background: #1A1A1A;
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--color-area);
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+.computed-field .computed-label {
+  font-size: 9px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 2px;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+/* Section divider inside panel body */
+.param-divider {
+  border: none;
+  border-top: 1px solid var(--panel-border);
+  margin: 12px 0;
+}
+
+.param-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  margin-top: 4px;
+}
 </style>
 </head>
 <body>
@@ -752,6 +842,108 @@ textarea {
             No vertices defined
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Design Parameters — Phase 2 -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Design Parameters</h3>
+      </div>
+      <div class="panel-section-body">
+
+        <!-- Street Layout -->
+        <div class="param-group-label">Street Layout</div>
+        <div class="form-row">
+          <label>Layout Pattern</label>
+          <select id="layoutPattern" onchange="onDesignParamChange()">
+            <option value="grid">Grid</option>
+            <option value="curvilinear">Curvilinear</option>
+            <option value="cul-de-sac-loop">Cul-de-sac Loop</option>
+            <option value="spine-branches">Spine Road + Branches</option>
+          </select>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>ROW Width (ft)</label>
+            <input type="number" id="rowWidth" value="60" min="20" max="120" step="2" onchange="onDesignParamChange()" />
+          </div>
+          <div>
+            <label>Roadway Width (ft)</label>
+            <input type="number" id="roadwayWidth" value="40" min="20" max="80" step="2" onchange="onDesignParamChange()" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Street Orientation Bias</label>
+          <div class="range-row">
+            <input type="range" id="streetOrientation" min="0" max="180" step="1" value="0"
+                   oninput="document.getElementById('orientVal').textContent=this.value+'°'; onDesignParamChange();" />
+            <span class="range-value" id="orientVal">0°</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:9px; color:var(--text-secondary); margin-top:2px;">
+            <span>0° (N-S)</span><span>90° (E-W)</span><span>180°</span>
+          </div>
+        </div>
+
+        <hr class="param-divider" />
+
+        <!-- Lot Dimensions -->
+        <div class="param-group-label">Lot Dimensions</div>
+        <div class="form-row-inline">
+          <div>
+            <label>Min Lot Width (ft)</label>
+            <input type="number" id="minLotWidth" value="60" min="20" max="200" step="5" onchange="onDesignParamChange()" />
+          </div>
+          <div>
+            <label>Min Lot Depth (ft)</label>
+            <input type="number" id="minLotDepth" value="100" min="50" max="400" step="5" onchange="onDesignParamChange()" />
+          </div>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Min Lot Area (sf)</label>
+            <input type="number" id="minLotArea" value="7200" min="1000" max="200000" step="100" onchange="onDesignParamChange()" />
+          </div>
+          <div>
+            <label>Corner Lot Bonus (ft)</label>
+            <input type="number" id="cornerLotBonus" value="10" min="0" max="30" step="1" onchange="onDesignParamChange()" />
+          </div>
+        </div>
+
+        <hr class="param-divider" />
+
+        <!-- Cul-de-sac -->
+        <div class="param-group-label">Cul-de-sac</div>
+        <div class="form-row-inline">
+          <div>
+            <label>CDS Radius (ft, ROW)</label>
+            <input type="number" id="cdsRadius" value="50" min="30" max="100" step="5" onchange="onDesignParamChange()" />
+          </div>
+          <div>
+            <label>Knuckle Radius (ft)</label>
+            <input type="number" id="cdsKnuckleRadius" value="35" min="15" max="60" step="5" onchange="onDesignParamChange()" />
+          </div>
+        </div>
+
+        <hr class="param-divider" />
+
+        <!-- Setback / Buffer -->
+        <div class="param-group-label">Setbacks</div>
+        <div class="form-row">
+          <label>Perimeter Setback / Buffer (ft)</label>
+          <input type="number" id="perimeterSetback" value="20" min="0" max="100" step="5" onchange="onDesignParamChange()" />
+        </div>
+
+        <hr class="param-divider" />
+
+        <!-- Computed Density -->
+        <div class="param-group-label">Computed</div>
+        <div class="computed-field">
+          <div id="targetDensity">--</div>
+          <div class="computed-label">Target Density (du/ac)</div>
+        </div>
+
       </div>
     </div>
 
@@ -1077,6 +1269,7 @@ function updateStats() {
     document.getElementById('statPerimeter').textContent = '--';
   }
   updateVertexList();
+  computeDensity();
 }
 
 function updateVertexList() {
@@ -1363,6 +1556,60 @@ document.getElementById('snapMode').addEventListener('change', e => {
   const labels = { none: 'Off', grid: 'Grid', vertex: 'Vertex', both: 'Grid + Vertex' };
   document.getElementById('statusSnap').textContent = labels[e.target.value] || 'Off';
 });
+
+// ============================================
+// DESIGN PARAMETERS — Phase 2
+// ============================================
+function getDesignParams() {
+  return {
+    layoutPattern: document.getElementById('layoutPattern').value,
+    rowWidth: parseFloat(document.getElementById('rowWidth').value) || 60,
+    roadwayWidth: parseFloat(document.getElementById('roadwayWidth').value) || 40,
+    streetOrientation: parseFloat(document.getElementById('streetOrientation').value) || 0,
+    minLotWidth: parseFloat(document.getElementById('minLotWidth').value) || 60,
+    minLotDepth: parseFloat(document.getElementById('minLotDepth').value) || 100,
+    minLotArea: parseFloat(document.getElementById('minLotArea').value) || 7200,
+    cornerLotBonus: parseFloat(document.getElementById('cornerLotBonus').value) || 10,
+    cdsRadius: parseFloat(document.getElementById('cdsRadius').value) || 50,
+    cdsKnuckleRadius: parseFloat(document.getElementById('cdsKnuckleRadius').value) || 35,
+    perimeterSetback: parseFloat(document.getElementById('perimeterSetback').value) || 20
+  };
+}
+
+function computeDensity() {
+  if (!state.isClosed || state.vertices.length < 3) {
+    document.getElementById('targetDensity').textContent = '--';
+    return;
+  }
+  const params = getDesignParams();
+  const totalAreaSqFt = calcArea(state.vertices);
+  const totalAcres = totalAreaSqFt / 43560;
+
+  // Estimate usable area: subtract perimeter buffer
+  const bufferAreaLoss = calcPerimeter(state.vertices) * params.perimeterSetback;
+  const usableAreaSqFt = Math.max(0, totalAreaSqFt - bufferAreaLoss);
+
+  // Estimate street area: assume ~25-35% of usable area for streets depending on pattern
+  const streetPcts = {
+    'grid': 0.28,
+    'curvilinear': 0.25,
+    'cul-de-sac-loop': 0.30,
+    'spine-branches': 0.27
+  };
+  const streetPct = streetPcts[params.layoutPattern] || 0.28;
+  const lotAreaSqFt = usableAreaSqFt * (1 - streetPct);
+
+  // Estimate lot count from minimum lot area
+  const estLots = Math.floor(lotAreaSqFt / params.minLotArea);
+  const density = totalAcres > 0 ? (estLots / totalAcres).toFixed(2) : 0;
+
+  document.getElementById('targetDensity').textContent = density + ' du/ac (~' + estLots + ' lots)';
+}
+
+function onDesignParamChange() {
+  computeDensity();
+  render();
+}
 
 // ============================================
 // UI HELPERS
