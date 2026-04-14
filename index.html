@@ -995,26 +995,58 @@ input[type="range"]::-moz-range-thumb {
       </div>
       <div class="panel-section-body">
         <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.4;">
-          Import a screenshot from Google Maps or aerial photo as a background reference.
+          Import a Google Maps screenshot or aerial photo.<br>
+          <strong style="color:var(--text-label)">Step 1:</strong> Import image.<br>
+          <strong style="color:var(--text-label)">Step 2:</strong> Click "Place Image" then click on canvas where the image center should go.<br>
+          <strong style="color:var(--text-label)">Step 3:</strong> Adjust scale and rotation to align with boundary.
         </p>
         <button class="btn" onclick="document.getElementById('bgImageFile').click()">Import Image</button>
         <input type="file" id="bgImageFile" accept="image/*" style="display:none;" onchange="handleBgImage(event)" />
+        <button class="btn btn-primary" onclick="startPlaceBgImage()" id="btnPlaceBg" style="margin-top:6px; display:none;">
+          Place Image on Canvas
+        </button>
         <div class="form-row" style="margin-top:8px;">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="bgDraggable" checked onchange="state.bgDraggable=this.checked;" /> Drag to Reposition
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Anchor Point (ft)</label>
+          <div class="form-row-inline" style="margin-bottom:0;">
+            <div>
+              <input type="number" id="bgAnchorX" value="0" step="1" onchange="state.bgAnchorX=parseFloat(this.value)||0; render();" placeholder="X" />
+            </div>
+            <div>
+              <input type="number" id="bgAnchorY" value="0" step="1" onchange="state.bgAnchorY=parseFloat(this.value)||0; render();" placeholder="Y" />
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
           <label>Image Opacity</label>
           <div class="range-row">
-            <input type="range" id="bgOpacity" min="0" max="100" step="5" value="30"
+            <input type="range" id="bgOpacity" min="0" max="100" step="5" value="40"
                    oninput="state.bgOpacity=this.value/100; document.getElementById('bgOpVal').textContent=this.value+'%'; render();" />
-            <span class="range-value" id="bgOpVal">30%</span>
+            <span class="range-value" id="bgOpVal">40%</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Scale (ft per image pixel)</label>
+          <div class="range-row">
+            <input type="range" id="bgScaleSlider" min="0.1" max="20" step="0.1" value="2"
+                   oninput="state.bgFtPerPx=parseFloat(this.value); document.getElementById('bgScaleVal').textContent=this.value; render();" />
+            <span class="range-value" id="bgScaleVal">2</span>
           </div>
         </div>
         <div class="form-row-inline">
           <div>
-            <label>Scale (%)</label>
-            <input type="number" id="bgScale" value="100" min="10" max="500" step="5" onchange="state.bgScale=this.value/100; render();" />
+            <label>Fine Scale</label>
+            <input type="number" id="bgScaleFine" value="2" min="0.01" max="50" step="0.01"
+                   onchange="state.bgFtPerPx=parseFloat(this.value)||2; document.getElementById('bgScaleSlider').value=state.bgFtPerPx; document.getElementById('bgScaleVal').textContent=state.bgFtPerPx; render();" />
           </div>
           <div>
             <label>Rotation (°)</label>
-            <input type="number" id="bgRotation" value="0" min="-180" max="180" step="1" onchange="state.bgRotation=this.value; render();" />
+            <input type="number" id="bgRotation" value="0" min="-180" max="180" step="0.5"
+                   onchange="state.bgRotation=parseFloat(this.value)||0; render();" />
           </div>
         </div>
         <button class="btn btn-danger" onclick="clearBgImage()" style="margin-top:4px;">Remove Image</button>
@@ -5047,12 +5079,20 @@ function handleLoadProject(event) {
 
 // ============================================
 // BACKGROUND IMAGE (Google Maps / Aerial)
+// Manual placement on canvas
 // ============================================
 state.bgImage = null;
 state.bgImageData = null;
-state.bgOpacity = 0.3;
-state.bgScale = 1;
+state.bgOpacity = 0.4;
+state.bgFtPerPx = 2;        // feet per image pixel (scale)
 state.bgRotation = 0;
+state.bgAnchorX = 0;         // world X where image center is placed
+state.bgAnchorY = 0;         // world Y where image center is placed
+state.bgPlacing = false;      // true when user is clicking to place
+state.bgDragging = false;     // true when user is dragging the image
+state.bgDraggable = true;
+state.bgDragStartX = 0;
+state.bgDragStartY = 0;
 
 function handleBgImage(event) {
   const file = event.target.files[0];
@@ -5061,7 +5101,8 @@ function handleBgImage(event) {
   reader.onload = ev => {
     state.bgImageData = ev.target.result;
     loadBgFromData(ev.target.result);
-    showToast('Background image loaded', 'success');
+    document.getElementById('btnPlaceBg').style.display = 'block';
+    showToast('Image loaded — click "Place Image on Canvas" to position it', 'success');
   };
   reader.readAsDataURL(file);
   event.target.value = '';
@@ -5072,15 +5113,42 @@ function loadBgFromData(dataUrl) {
   img.onload = () => {
     state.bgImage = img;
     document.getElementById('bgPreview').innerHTML = '<img src="' + dataUrl + '" />';
+    document.getElementById('btnPlaceBg').style.display = 'block';
     render();
   };
   img.src = dataUrl;
 }
 
+function startPlaceBgImage() {
+  if (!state.bgImage) { showToast('Import an image first', 'warning'); return; }
+  state.bgPlacing = true;
+  document.getElementById('btnPlaceBg').textContent = 'Click on canvas to place...';
+  document.getElementById('btnPlaceBg').disabled = true;
+  document.getElementById('canvas-hint').textContent = 'Click on canvas where the image center should be placed';
+  canvas.style.cursor = 'crosshair';
+  showToast('Click on the canvas to place the image center point', 'info');
+}
+
+function placeBgImageAt(worldX, worldY) {
+  state.bgAnchorX = worldX;
+  state.bgAnchorY = worldY;
+  state.bgPlacing = false;
+  document.getElementById('bgAnchorX').value = worldX.toFixed(1);
+  document.getElementById('bgAnchorY').value = worldY.toFixed(1);
+  document.getElementById('btnPlaceBg').textContent = 'Place Image on Canvas';
+  document.getElementById('btnPlaceBg').disabled = false;
+  document.getElementById('canvas-hint').textContent = 'Image placed — adjust scale and rotation to align. Drag to reposition.';
+  canvas.style.cursor = 'crosshair';
+  render();
+  showToast('Image placed at (' + worldX.toFixed(1) + ', ' + worldY.toFixed(1) + ') — adjust scale/rotation to align', 'success');
+}
+
 function clearBgImage() {
   state.bgImage = null;
   state.bgImageData = null;
+  state.bgPlacing = false;
   document.getElementById('bgPreview').innerHTML = 'No image loaded';
+  document.getElementById('btnPlaceBg').style.display = 'none';
   render();
 }
 
@@ -5089,15 +5157,31 @@ function drawBgImage() {
   const img = state.bgImage;
   ctx.save();
   ctx.globalAlpha = state.bgOpacity;
-  const scale = state.bgScale * state.zoom;
-  const imgW = img.width * scale / state.scale;
-  const imgH = img.height * scale / state.scale;
-  // Center on canvas, apply pan
-  const cx = W / 2 + state.panX;
-  const cy = H / 2 + state.panY;
-  ctx.translate(cx, cy);
+
+  // Image dimensions in world feet
+  const imgWFt = img.width * state.bgFtPerPx;
+  const imgHFt = img.height * state.bgFtPerPx;
+
+  // Convert anchor point (world coords) to screen coords
+  const [acx, acy] = worldToScreen(state.bgAnchorX, state.bgAnchorY);
+
+  // Image dimensions in screen pixels
+  const imgWPx = (imgWFt / state.scale) * state.zoom;
+  const imgHPx = (imgHFt / state.scale) * state.zoom;
+
+  ctx.translate(acx, acy);
   ctx.rotate((state.bgRotation || 0) * Math.PI / 180);
-  ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
+  ctx.drawImage(img, -imgWPx / 2, -imgHPx / 2, imgWPx, imgHPx);
+
+  // Draw anchor crosshair
+  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = '#FF6B6B';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-10, 0); ctx.lineTo(10, 0);
+  ctx.moveTo(0, -10); ctx.lineTo(0, 10);
+  ctx.stroke();
+
   ctx.restore();
 }
 
@@ -5187,13 +5271,21 @@ function printPDF() {
 // INIT
 // ============================================
 
-// Intercept canvas clicks for planning area drawing
+// Intercept canvas clicks for planning area drawing AND background image placement
 canvas.addEventListener('click', function(e) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  let [wx, wy] = screenToWorld(sx, sy);
+
+  // Background image placement
+  if (state.bgPlacing) {
+    placeBgImageAt(wx, wy);
+    return;
+  }
+
+  // Planning area drawing
   if (state.drawingPA) {
-    const rect = canvas.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
-    let [wx, wy] = screenToWorld(sx, sy);
     [wx, wy] = snapToGrid(wx, wy);
     state.currentPA.push({ x: wx, y: wy });
     render();
@@ -5208,6 +5300,58 @@ canvas.addEventListener('dblclick', function(e) {
     closePlanningArea();
   }
 }, true);
+
+// Background image drag-to-reposition
+canvas.addEventListener('mousedown', function(e) {
+  if (state.bgImage && state.bgDraggable && !state.bgPlacing && !state.isDrawing && !state.drawingPA && e.button === 0) {
+    // Check if click is near the image anchor
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const [acx, acy] = worldToScreen(state.bgAnchorX, state.bgAnchorY);
+    const imgWPx = (state.bgImage.width * state.bgFtPerPx / state.scale) * state.zoom;
+    const imgHPx = (state.bgImage.height * state.bgFtPerPx / state.scale) * state.zoom;
+    // Check if within image bounds (rough check)
+    if (Math.abs(sx - acx) < imgWPx / 2 && Math.abs(sy - acy) < imgHPx / 2) {
+      // Check if shift key held for image drag (to avoid conflict with normal drawing)
+      if (e.shiftKey) {
+        state.bgDragging = true;
+        state.bgDragStartX = sx;
+        state.bgDragStartY = sy;
+        canvas.style.cursor = 'move';
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+  }
+});
+
+canvas.addEventListener('mousemove', function(e) {
+  if (state.bgDragging) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const dx = sx - state.bgDragStartX;
+    const dy = sy - state.bgDragStartY;
+    // Convert screen delta to world delta
+    const worldDx = (dx / state.zoom) * state.scale;
+    const worldDy = -(dy / state.zoom) * state.scale; // Y-up
+    state.bgAnchorX += worldDx;
+    state.bgAnchorY += worldDy;
+    state.bgDragStartX = sx;
+    state.bgDragStartY = sy;
+    document.getElementById('bgAnchorX').value = state.bgAnchorX.toFixed(1);
+    document.getElementById('bgAnchorY').value = state.bgAnchorY.toFixed(1);
+    render();
+  }
+});
+
+canvas.addEventListener('mouseup', function(e) {
+  if (state.bgDragging) {
+    state.bgDragging = false;
+    canvas.style.cursor = 'crosshair';
+  }
+});
 
 resizeCanvas();
 </script>
