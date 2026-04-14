@@ -1370,25 +1370,28 @@ input[type="range"]::-moz-range-thumb {
 
         <hr class="param-divider" />
 
-        <!-- Lot Dimensions -->
-        <div class="param-group-label">Lot Dimensions</div>
+        <!-- Lot Dimensions (defaults when no PA defined) -->
+        <div class="param-group-label">Default Lot Dimensions</div>
+        <p style="font-size:9px; color:var(--text-secondary); margin-bottom:6px;">
+          Used when no Planning Areas are defined. Otherwise PA criteria apply.
+        </p>
         <div class="form-row-inline">
           <div>
-            <label>Min Lot Width (ft)</label>
+            <label>Min Width (ft)</label>
             <input type="number" id="minLotWidth" value="60" min="20" max="200" step="5" onchange="onDesignParamChange()" />
           </div>
           <div>
-            <label>Min Lot Depth (ft)</label>
+            <label>Min Depth (ft)</label>
             <input type="number" id="minLotDepth" value="100" min="50" max="400" step="5" onchange="onDesignParamChange()" />
           </div>
         </div>
         <div class="form-row-inline">
           <div>
-            <label>Min Lot Area (sf)</label>
+            <label>Min Area (sf)</label>
             <input type="number" id="minLotArea" value="7200" min="1000" max="200000" step="100" onchange="onDesignParamChange()" />
           </div>
           <div>
-            <label>Corner Lot Bonus (ft)</label>
+            <label>Corner Bonus (ft)</label>
             <input type="number" id="cornerLotBonus" value="10" min="0" max="30" step="1" onchange="onDesignParamChange()" />
           </div>
         </div>
@@ -3298,6 +3301,26 @@ function detectKnuckles(streets, knuckleRadius) {
 // PHASE 3 — GRID STREET LAYOUT ENGINE
 // ============================================
 
+function generateLayoutInArea(areaPolygon, areaParams) {
+  // Generate layout within a specific polygon using specific params
+  const buffer = offsetPolygon(areaPolygon, areaParams.perimeterSetback);
+  if (buffer.length < 3) return;
+
+  // Merge this buffer into the overall buffered boundary for rendering
+  if (state.bufferedBoundary.length === 0) {
+    state.bufferedBoundary = buffer;
+  }
+
+  const pattern = areaParams.layoutPattern;
+  if (pattern === 'grid') {
+    generateGridLayout(buffer, areaParams);
+  } else if (pattern === 'curvilinear' || pattern === 'spine-branches') {
+    generateCurvilinearLayout(buffer, areaParams);
+  } else if (pattern === 'cul-de-sac-loop') {
+    generateCulDeSacLoopLayout(buffer, areaParams);
+  }
+}
+
 function generateLayout() {
   if (!state.isClosed || state.vertices.length < 3) {
     showToast('Define a closed boundary first', 'warning');
@@ -3306,28 +3329,46 @@ function generateLayout() {
   const params = getDesignParams();
 
   clearLayout();
-  showToast('Generating ' + params.layoutPattern + ' layout...', 'info');
 
-  // Step 1: Offset boundary inward by perimeter setback
-  const buffer = offsetPolygon(state.vertices, params.perimeterSetback);
-  if (buffer.length < 3) {
-    showToast('Buffer too large — no usable area remains', 'error');
-    return;
-  }
-  state.bufferedBoundary = buffer;
+  // Check if Planning Areas are defined
+  if (state.planningAreas.length > 0) {
+    // Generate layout within EACH planning area independently
+    showToast('Generating layout for ' + state.planningAreas.length + ' planning areas...', 'info');
 
-  // Dispatch to the selected engine
-  if (params.layoutPattern === 'grid') {
-    generateGridLayout(buffer, params);
-  } else if (params.layoutPattern === 'curvilinear') {
-    generateCurvilinearLayout(buffer, params);
-  } else if (params.layoutPattern === 'cul-de-sac-loop') {
-    generateCulDeSacLoopLayout(buffer, params);
-  } else if (params.layoutPattern === 'spine-branches') {
-    generateCurvilinearLayout(buffer, params); // Spine+branches uses curvilinear engine
+    for (const pa of state.planningAreas) {
+      if (pa.polygon.length < 3) continue;
+      // Build params for this PA
+      const paParams = Object.assign({}, params);
+      if (pa.lotCriteria) {
+        paParams.minLotWidth = pa.lotCriteria.minLotWidth || params.minLotWidth;
+        paParams.minLotDepth = pa.lotCriteria.minLotDepth || params.minLotDepth;
+        paParams.minLotArea = pa.lotCriteria.minLotArea || params.minLotArea;
+        paParams.layoutPattern = pa.lotCriteria.layoutPattern || pa.layoutPattern || params.layoutPattern;
+      } else {
+        paParams.layoutPattern = pa.layoutPattern || params.layoutPattern;
+      }
+      generateLayoutInArea(pa.polygon, paParams);
+    }
   } else {
-    showToast('Unknown layout pattern', 'error');
-    return;
+    // No PAs — generate for the whole boundary
+    showToast('Generating ' + params.layoutPattern + ' layout...', 'info');
+
+    const buffer = offsetPolygon(state.vertices, params.perimeterSetback);
+    if (buffer.length < 3) {
+      showToast('Buffer too large — no usable area remains', 'error');
+      return;
+    }
+    state.bufferedBoundary = buffer;
+
+    if (params.layoutPattern === 'grid') {
+      generateGridLayout(buffer, params);
+    } else if (params.layoutPattern === 'curvilinear') {
+      generateCurvilinearLayout(buffer, params);
+    } else if (params.layoutPattern === 'cul-de-sac-loop') {
+      generateCulDeSacLoopLayout(buffer, params);
+    } else if (params.layoutPattern === 'spine-branches') {
+      generateCurvilinearLayout(buffer, params);
+    }
   }
 
   // Detect knuckles at intersections < 120° (Riverside Co. Std 801)
@@ -3339,7 +3380,11 @@ function generateLayout() {
   const knuckleMsg = state.knuckles.length > 0
     ? ', ' + state.knuckles.length + ' knuckle(s)'
     : '';
-  showToast('Layout generated: ' + state.lots.length + ' lots' + knuckleMsg, 'success');
+  if (state.lots.length === 0) {
+    showToast('Warning: 0 lots generated. Streets: ' + state.streets.length + '. Try adjusting parameters or layout pattern.', 'warning');
+  } else {
+    showToast('Layout generated: ' + state.lots.length + ' lots, ' + state.streets.length + ' street segments' + knuckleMsg, 'success');
+  }
 }
 
 // ============================================
@@ -5555,7 +5600,10 @@ function splitByAcreage() {
 
   updatePlanningAreaList();
   render();
-  showToast('Site split: ' + dirLabel + 'erly ' + targetAcres + ' ac + ' + oppLabel + ' balance', 'success');
+  showToast('Site split: ' + dirLabel + 'erly ' + targetAcres + ' ac + ' + oppLabel + ' balance — click Generate Layout', 'success');
+
+  // Auto-generate layout within the new PAs
+  generateLayout();
 }
 
 // ============================================
