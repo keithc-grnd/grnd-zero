@@ -947,6 +947,56 @@ input[type="range"]::-moz-range-thumb {
       </div>
     </div>
 
+    <!-- Generate Layout — Phase 3 -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Generate Layout</h3>
+      </div>
+      <div class="panel-section-body">
+        <button class="btn btn-primary" onclick="generateLayout()" id="btnGenerate" style="font-size:12px; padding:10px 14px;">
+          Generate Layout
+        </button>
+        <button class="btn" onclick="clearLayout()" style="margin-top:6px;">Clear Layout Only</button>
+      </div>
+    </div>
+
+    <!-- Yield Summary — Phase 3 -->
+    <div class="panel-section">
+      <div class="panel-section-header" onclick="toggleSection(this)">
+        <span class="collapse-icon">&#9660;</span>
+        <h3>Yield Summary</h3>
+      </div>
+      <div class="panel-section-body">
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-value" id="yieldTotal">--</div>
+            <div class="stat-label">Total Lots</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="yieldCompliant">--</div>
+            <div class="stat-label">Compliant</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="yieldFlagged">--</div>
+            <div class="stat-label">Undersized</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="yieldDensity">--</div>
+            <div class="stat-label">Actual du/ac</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="yieldStreetArea">--</div>
+            <div class="stat-label">Street Area (sf)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="yieldLotArea">--</div>
+            <div class="stat-label">Avg Lot Area (sf)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- View Controls -->
     <div class="panel-section">
       <div class="panel-section-header" onclick="toggleSection(this)">
@@ -1226,6 +1276,9 @@ function drawBoundary() {
 function render() {
   ctx.clearRect(0, 0, W, H);
   drawGrid();
+  drawBufferedBoundary();
+  drawStreets();
+  drawLots();
   drawBoundary();
 }
 
@@ -1635,6 +1688,561 @@ function showToast(msg, type) {
     toast.style.animation = 'slideOut 0.3s ease forwards';
     setTimeout(() => toast.remove(), 300);
   }, 3000);
+}
+
+// ============================================
+// PHASE 3 — GEOMETRY UTILITIES
+// ============================================
+
+// Layout result storage
+state.streets = [];      // { centerline: [{x,y},...], rowLeft: [...], rowRight: [...] }
+state.lots = [];          // { polygon: [{x,y},...], area: Number, number: Number, compliant: Boolean }
+state.bufferedBoundary = [];
+state.blocks = [];
+
+// -- Polygon offset (inward shrink) via edge normal offset --
+function offsetPolygon(verts, dist) {
+  const n = verts.length;
+  if (n < 3) return [];
+  // Ensure CCW winding
+  let signedArea = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    signedArea += (verts[j].x - verts[i].x) * (verts[j].y + verts[i].y);
+  }
+  const poly = signedArea > 0 ? verts.slice() : verts.slice().reverse();
+  const offsetEdges = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const dx = poly[j].x - poly[i].x;
+    const dy = poly[j].y - poly[i].y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-9) continue;
+    // Inward normal for CCW polygon (right-hand normal)
+    const nx = dy / len;
+    const ny = -dx / len;
+    offsetEdges.push({
+      p1: { x: poly[i].x + nx * dist, y: poly[i].y + ny * dist },
+      p2: { x: poly[j].x + nx * dist, y: poly[j].y + ny * dist }
+    });
+  }
+  // Intersect consecutive offset edges
+  const result = [];
+  for (let i = 0; i < offsetEdges.length; i++) {
+    const j = (i + 1) % offsetEdges.length;
+    const pt = lineLineIntersect(
+      offsetEdges[i].p1, offsetEdges[i].p2,
+      offsetEdges[j].p1, offsetEdges[j].p2
+    );
+    if (pt) result.push(pt);
+    else result.push(offsetEdges[i].p2);
+  }
+  return result;
+}
+
+// -- Line-line intersection --
+function lineLineIntersect(p1, p2, p3, p4) {
+  const d = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+  if (Math.abs(d) < 1e-10) return null;
+  const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / d;
+  return {
+    x: p1.x + t * (p2.x - p1.x),
+    y: p1.y + t * (p2.y - p1.y)
+  };
+}
+
+// -- Segment-segment intersection (bounded) --
+function segSegIntersect(a1, a2, b1, b2) {
+  const d = (a2.x - a1.x) * (b2.y - b1.y) - (a2.y - a1.y) * (b2.x - b1.x);
+  if (Math.abs(d) < 1e-10) return null;
+  const t = ((b1.x - a1.x) * (b2.y - b1.y) - (b1.y - a1.y) * (b2.x - b1.x)) / d;
+  const u = -((a2.x - a1.x) * (b1.y - a1.y) - (a2.y - a1.y) * (b1.x - a1.x)) / d;
+  if (t >= -1e-9 && t <= 1 + 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) {
+    return { x: a1.x + t * (a2.x - a1.x), y: a1.y + t * (a2.y - a1.y) };
+  }
+  return null;
+}
+
+// -- Point in polygon test --
+function pointInPolygon(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > pt.y) !== (yj > pt.y)) &&
+        (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// -- Clip a line (infinite extent defined by two far points) to polygon, returning segments inside --
+function clipLineToPolygon(lp1, lp2, poly) {
+  const intersections = [];
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const pt = segSegIntersect(lp1, lp2, poly[i], poly[j]);
+    if (pt) {
+      const t = Math.abs(lp2.x - lp1.x) > Math.abs(lp2.y - lp1.y)
+        ? (pt.x - lp1.x) / (lp2.x - lp1.x)
+        : (pt.y - lp1.y) / (lp2.y - lp1.y);
+      intersections.push({ pt, t });
+    }
+  }
+  intersections.sort((a, b) => a.t - b.t);
+  // Remove near-duplicates
+  const unique = [intersections[0]];
+  for (let i = 1; i < intersections.length; i++) {
+    if (Math.abs(intersections[i].t - unique[unique.length - 1].t) > 1e-6) {
+      unique.push(intersections[i]);
+    }
+  }
+  // Pair up entry/exit points
+  const segments = [];
+  for (let i = 0; i < unique.length - 1; i += 2) {
+    segments.push([unique[i].pt, unique[i + 1].pt]);
+  }
+  return segments;
+}
+
+// -- Polygon area (signed, for any winding) --
+function polygonArea(verts) {
+  let a = 0;
+  for (let i = 0; i < verts.length; i++) {
+    const j = (i + 1) % verts.length;
+    a += verts[i].x * verts[j].y - verts[j].x * verts[i].y;
+  }
+  return Math.abs(a) / 2;
+}
+
+// -- Clip a convex polygon to a convex or concave polygon using Sutherland-Hodgman --
+function clipPolygonSH(subject, clip) {
+  let output = subject.slice();
+  for (let i = 0; i < clip.length && output.length > 0; i++) {
+    const input = output;
+    output = [];
+    const edgeStart = clip[i];
+    const edgeEnd = clip[(i + 1) % clip.length];
+    for (let j = 0; j < input.length; j++) {
+      const cur = input[j];
+      const prev = input[(j + input.length - 1) % input.length];
+      const curInside = cross2d(edgeStart, edgeEnd, cur) >= 0;
+      const prevInside = cross2d(edgeStart, edgeEnd, prev) >= 0;
+      if (curInside) {
+        if (!prevInside) {
+          const ix = lineLineIntersect(edgeStart, edgeEnd, prev, cur);
+          if (ix) output.push(ix);
+        }
+        output.push(cur);
+      } else if (prevInside) {
+        const ix = lineLineIntersect(edgeStart, edgeEnd, prev, cur);
+        if (ix) output.push(ix);
+      }
+    }
+  }
+  return output;
+}
+
+function cross2d(a, b, p) {
+  return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+}
+
+// ============================================
+// PHASE 3 — GRID STREET LAYOUT ENGINE
+// ============================================
+
+function generateLayout() {
+  if (!state.isClosed || state.vertices.length < 3) {
+    showToast('Define a closed boundary first', 'warning');
+    return;
+  }
+  const params = getDesignParams();
+  if (params.layoutPattern !== 'grid') {
+    showToast('Phase 3 supports Grid layout. Other patterns coming in future phases.', 'warning');
+    return;
+  }
+
+  clearLayout();
+  showToast('Generating grid layout...', 'info');
+
+  // Step 1: Offset boundary inward by perimeter setback
+  const buffer = offsetPolygon(state.vertices, params.perimeterSetback);
+  if (buffer.length < 3) {
+    showToast('Buffer too large — no usable area remains', 'error');
+    return;
+  }
+  state.bufferedBoundary = buffer;
+
+  // Step 2: Compute bounding box of buffered polygon
+  const xs = buffer.map(v => v.x);
+  const ys = buffer.map(v => v.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const diag = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
+
+  // Step 3: Orientation angle (convert to radians, 0 = N-S streets)
+  const angleDeg = params.streetOrientation;
+  const angleRad = (angleDeg * Math.PI) / 180;
+  // Street direction vector (primary streets run along this direction)
+  const dirX = Math.sin(angleRad);
+  const dirY = Math.cos(angleRad);
+  // Perpendicular direction (cross streets)
+  const perpX = Math.cos(angleRad);
+  const perpY = -Math.sin(angleRad);
+
+  // Step 4: Block width = 2 * lotDepth + ROW width
+  const blockWidth = 2 * params.minLotDepth + params.rowWidth;
+  // Cross-street interval: lots-per-block * lotWidth + ROW
+  const lotsPerBlock = Math.max(1, Math.round(300 / params.minLotWidth)); // ~300ft default block length
+  const blockLength = lotsPerBlock * params.minLotWidth + params.rowWidth;
+
+  // Step 5: Generate parallel street centerlines (perpendicular to lot depth direction)
+  // Streets run along `dir` direction, spaced along `perp` direction
+  const halfRange = diag;
+  const streetsCL = [];
+
+  // Calculate how many streets we need
+  const startOffset = -halfRange;
+  const endOffset = halfRange;
+
+  // Primary streets (running along dir direction, spaced along perp)
+  const primaryStreets = [];
+  for (let d = startOffset; d <= endOffset; d += blockWidth) {
+    const ox = cx + perpX * d;
+    const oy = cy + perpY * d;
+    const p1 = { x: ox - dirX * halfRange, y: oy - dirY * halfRange };
+    const p2 = { x: ox + dirX * halfRange, y: oy + dirY * halfRange };
+    const segs = clipLineToPolygon(p1, p2, buffer);
+    for (const seg of segs) {
+      primaryStreets.push({
+        centerline: seg,
+        perpOffset: d,
+        isPrimary: true
+      });
+    }
+  }
+
+  // Cross streets (running along perp direction, spaced along dir)
+  const crossStreets = [];
+  for (let d = startOffset; d <= endOffset; d += blockLength) {
+    const ox = cx + dirX * d;
+    const oy = cy + dirY * d;
+    const p1 = { x: ox - perpX * halfRange, y: oy - perpY * halfRange };
+    const p2 = { x: ox + perpX * halfRange, y: oy + perpY * halfRange };
+    const segs = clipLineToPolygon(p1, p2, buffer);
+    for (const seg of segs) {
+      crossStreets.push({
+        centerline: seg,
+        dirOffset: d,
+        isPrimary: false
+      });
+    }
+  }
+
+  // Build street objects with ROW edges
+  const halfROW = params.rowWidth / 2;
+  state.streets = [];
+
+  for (const st of primaryStreets) {
+    const [a, b] = st.centerline;
+    state.streets.push({
+      centerline: [a, b],
+      rowLeft: [
+        { x: a.x + perpX * halfROW, y: a.y + perpY * halfROW },
+        { x: b.x + perpX * halfROW, y: b.y + perpY * halfROW }
+      ],
+      rowRight: [
+        { x: a.x - perpX * halfROW, y: a.y - perpY * halfROW },
+        { x: b.x - perpX * halfROW, y: b.y - perpY * halfROW }
+      ],
+      isPrimary: true
+    });
+  }
+  for (const st of crossStreets) {
+    const [a, b] = st.centerline;
+    state.streets.push({
+      centerline: [a, b],
+      rowLeft: [
+        { x: a.x + dirX * halfROW, y: a.y + dirY * halfROW },
+        { x: b.x + dirX * halfROW, y: b.y + dirY * halfROW }
+      ],
+      rowRight: [
+        { x: a.x - dirX * halfROW, y: a.y - dirY * halfROW },
+        { x: b.x - dirX * halfROW, y: b.y - dirY * halfROW }
+      ],
+      isPrimary: false
+    });
+  }
+
+  // Step 6: Generate blocks — rectangles between adjacent primary and cross street ROW edges
+  generateBlocks(primaryStreets, crossStreets, params, buffer, dirX, dirY, perpX, perpY, cx, cy, halfROW);
+
+  updateYieldSummary(params);
+  render();
+  showToast('Layout generated: ' + state.lots.length + ' lots', 'success');
+}
+
+function generateBlocks(primaryStreets, crossStreets, params, buffer, dirX, dirY, perpX, perpY, cx, cy, halfROW) {
+  // Collect unique primary offsets and cross offsets for block boundaries
+  const pOffsets = [...new Set(primaryStreets.map(s => s.perpOffset))].sort((a, b) => a - b);
+  const cOffsets = [...new Set(crossStreets.map(s => s.dirOffset))].sort((a, b) => a - b);
+
+  if (pOffsets.length < 2 || cOffsets.length < 2) {
+    showToast('Boundary too small for grid layout with current parameters', 'warning');
+    return;
+  }
+
+  state.lots = [];
+  let lotNum = 1;
+
+  for (let pi = 0; pi < pOffsets.length - 1; pi++) {
+    for (let ci = 0; ci < cOffsets.length - 1; ci++) {
+      // Block is bounded by:
+      // - Primary streets at pOffsets[pi] and pOffsets[pi+1] (offset along perp)
+      // - Cross streets at cOffsets[ci] and cOffsets[ci+1] (offset along dir)
+      // Inner edges = centerline offset +/- halfROW
+
+      const pLeft = pOffsets[pi] + halfROW;     // Right ROW edge of left primary street
+      const pRight = pOffsets[pi + 1] - halfROW; // Left ROW edge of right primary street
+      const cBottom = cOffsets[ci] + halfROW;    // Top ROW edge of bottom cross street
+      const cTop = cOffsets[ci + 1] - halfROW;   // Bottom ROW edge of top cross street
+
+      const blockWidthAvail = pRight - pLeft;
+      const blockLengthAvail = cTop - cBottom;
+
+      if (blockWidthAvail < params.minLotWidth || blockLengthAvail < params.minLotDepth) continue;
+
+      // Block corners in world coords
+      const blockPoly = [
+        {
+          x: cx + perpX * pLeft + dirX * cBottom,
+          y: cy + perpY * pLeft + dirY * cBottom
+        },
+        {
+          x: cx + perpX * pRight + dirX * cBottom,
+          y: cy + perpY * pRight + dirY * cBottom
+        },
+        {
+          x: cx + perpX * pRight + dirX * cTop,
+          y: cy + perpY * pRight + dirY * cTop
+        },
+        {
+          x: cx + perpX * pLeft + dirX * cTop,
+          y: cy + perpY * pLeft + dirY * cTop
+        }
+      ];
+
+      // Clip block to buffered boundary
+      const clippedBlock = clipPolygonSH(blockPoly, buffer);
+      if (clippedBlock.length < 3 || polygonArea(clippedBlock) < params.minLotArea) continue;
+
+      state.blocks.push(clippedBlock);
+
+      // Subdivide block into lots
+      // Lots run along the perp direction (width), stacked along dir direction (depth)
+      // Two rows of lots back-to-back, each fronting their respective primary street
+      const halfBlock = blockWidthAvail / 2;
+      const lotDepth = halfBlock; // Each lot takes half the block depth
+
+      // Number of lots per row along the block length
+      const numLots = Math.floor(blockLengthAvail / params.minLotWidth);
+      if (numLots < 1) continue;
+
+      const actualLotWidth = blockLengthAvail / numLots; // Spread evenly
+
+      for (let row = 0; row < 2; row++) {
+        const lotPerpStart = row === 0 ? pLeft : pLeft + halfBlock;
+        const lotPerpEnd = row === 0 ? pLeft + halfBlock : pRight;
+
+        for (let li = 0; li < numLots; li++) {
+          const lotDirStart = cBottom + li * actualLotWidth;
+          const lotDirEnd = cBottom + (li + 1) * actualLotWidth;
+
+          const lotPoly = [
+            {
+              x: cx + perpX * lotPerpStart + dirX * lotDirStart,
+              y: cy + perpY * lotPerpStart + dirY * lotDirStart
+            },
+            {
+              x: cx + perpX * lotPerpEnd + dirX * lotDirStart,
+              y: cy + perpY * lotPerpEnd + dirY * lotDirStart
+            },
+            {
+              x: cx + perpX * lotPerpEnd + dirX * lotDirEnd,
+              y: cy + perpY * lotPerpEnd + dirY * lotDirEnd
+            },
+            {
+              x: cx + perpX * lotPerpStart + dirX * lotDirEnd,
+              y: cy + perpY * lotPerpStart + dirY * lotDirEnd
+            }
+          ];
+
+          // Clip lot to buffered boundary
+          const clippedLot = clipPolygonSH(lotPoly, buffer);
+          if (clippedLot.length < 3) continue;
+
+          const lotArea = polygonArea(clippedLot);
+          if (lotArea < 10) continue; // Skip degenerate slivers
+
+          const compliant = lotArea >= params.minLotArea;
+          state.lots.push({
+            polygon: clippedLot,
+            area: lotArea,
+            number: lotNum++,
+            compliant,
+            width: actualLotWidth,
+            depth: lotDepth
+          });
+        }
+      }
+    }
+  }
+}
+
+function clearLayout() {
+  state.streets = [];
+  state.lots = [];
+  state.blocks = [];
+  state.bufferedBoundary = [];
+  document.getElementById('yieldTotal').textContent = '--';
+  document.getElementById('yieldCompliant').textContent = '--';
+  document.getElementById('yieldFlagged').textContent = '--';
+  document.getElementById('yieldDensity').textContent = '--';
+  document.getElementById('yieldStreetArea').textContent = '--';
+  document.getElementById('yieldLotArea').textContent = '--';
+  render();
+}
+
+function updateYieldSummary(params) {
+  const total = state.lots.length;
+  const compliant = state.lots.filter(l => l.compliant).length;
+  const flagged = total - compliant;
+  const totalBoundaryAcres = calcArea(state.vertices) / 43560;
+  const density = totalBoundaryAcres > 0 ? (total / totalBoundaryAcres).toFixed(2) : '--';
+
+  // Street area = total boundary area - buffer loss - lot area
+  const totalLotArea = state.lots.reduce((s, l) => s + l.area, 0);
+  const bufferedArea = state.bufferedBoundary.length > 2 ? polygonArea(state.bufferedBoundary) : 0;
+  const streetArea = Math.max(0, bufferedArea - totalLotArea);
+  const avgLotArea = total > 0 ? Math.round(totalLotArea / total) : 0;
+
+  document.getElementById('yieldTotal').textContent = total;
+  document.getElementById('yieldCompliant').textContent = compliant;
+  document.getElementById('yieldFlagged').textContent = flagged;
+  document.getElementById('yieldFlagged').style.color = flagged > 0 ? '#F44336' : '#4CAF50';
+  document.getElementById('yieldDensity').textContent = density;
+  document.getElementById('yieldStreetArea').textContent = streetArea.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  document.getElementById('yieldLotArea').textContent = avgLotArea.toLocaleString('en-US');
+}
+
+// ============================================
+// PHASE 3 — LAYOUT RENDERING
+// ============================================
+
+function drawBufferedBoundary() {
+  const buf = state.bufferedBoundary;
+  if (buf.length < 3) return;
+  ctx.strokeStyle = 'rgba(78, 205, 196, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([8, 4]);
+  ctx.beginPath();
+  const [fx, fy] = worldToScreen(buf[0].x, buf[0].y);
+  ctx.moveTo(fx, fy);
+  for (let i = 1; i < buf.length; i++) {
+    const [sx, sy] = worldToScreen(buf[i].x, buf[i].y);
+    ctx.lineTo(sx, sy);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawStreets() {
+  for (const st of state.streets) {
+    // Centerline — yellow
+    const [a, b] = st.centerline;
+    const [ax, ay] = worldToScreen(a.x, a.y);
+    const [bx, by] = worldToScreen(b.x, b.y);
+    ctx.strokeStyle = 'rgba(255, 217, 61, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // ROW edges — white dashed
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 3]);
+    // Left
+    const [la1x, la1y] = worldToScreen(st.rowLeft[0].x, st.rowLeft[0].y);
+    const [la2x, la2y] = worldToScreen(st.rowLeft[1].x, st.rowLeft[1].y);
+    ctx.beginPath(); ctx.moveTo(la1x, la1y); ctx.lineTo(la2x, la2y); ctx.stroke();
+    // Right
+    const [ra1x, ra1y] = worldToScreen(st.rowRight[0].x, st.rowRight[0].y);
+    const [ra2x, ra2y] = worldToScreen(st.rowRight[1].x, st.rowRight[1].y);
+    ctx.beginPath(); ctx.moveTo(ra1x, ra1y); ctx.lineTo(ra2x, ra2y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawLots() {
+  const showLabels = document.getElementById('showLabels').checked;
+
+  for (const lot of state.lots) {
+    const poly = lot.polygon;
+    if (poly.length < 3) continue;
+
+    // Fill
+    ctx.beginPath();
+    const [fx, fy] = worldToScreen(poly[0].x, poly[0].y);
+    ctx.moveTo(fx, fy);
+    for (let i = 1; i < poly.length; i++) {
+      const [sx, sy] = worldToScreen(poly[i].x, poly[i].y);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+
+    if (!lot.compliant) {
+      ctx.fillStyle = 'rgba(244, 67, 54, 0.15)';
+    } else {
+      ctx.fillStyle = 'rgba(69, 183, 209, 0.06)';
+    }
+    ctx.fill();
+
+    // Lot border
+    ctx.strokeStyle = lot.compliant ? 'rgba(200, 200, 200, 0.4)' : 'rgba(244, 67, 54, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Label: lot number and area
+    if (showLabels) {
+      let cxL = 0, cyL = 0;
+      for (const p of poly) { cxL += p.x; cyL += p.y; }
+      cxL /= poly.length; cyL /= poly.length;
+      const [lx, ly] = worldToScreen(cxL, cyL);
+
+      // Only label if zoom makes it readable
+      if (state.zoom > 0.3) {
+        ctx.font = 'bold 11px Consolas, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = lot.compliant ? 'rgba(255,255,255,0.7)' : 'rgba(244,67,54,0.9)';
+        ctx.fillText(lot.number, lx, ly - 4);
+
+        if (state.zoom > 0.6) {
+          ctx.font = '9px Consolas, monospace';
+          ctx.fillStyle = 'rgba(150,150,150,0.7)';
+          ctx.fillText(Math.round(lot.area).toLocaleString() + ' sf', lx, ly + 9);
+        }
+      }
+    }
+  }
 }
 
 // ============================================
