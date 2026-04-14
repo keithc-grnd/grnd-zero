@@ -4143,23 +4143,64 @@ function drawStreets() {
     ctx.lineWidth = isSelected ? 3 : 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
+    if (st.isCurved && st.curvePoints) {
+      // Draw curved centerline through bend point
+      const pts = st.curvePoints;
+      const [p0x, p0y] = worldToScreen(pts[0].x, pts[0].y);
+      ctx.moveTo(p0x, p0y);
+      for (let pi = 1; pi < pts.length; pi++) {
+        const [px, py] = worldToScreen(pts[pi].x, pts[pi].y);
+        ctx.lineTo(px, py);
+      }
+      // Draw bend handle
+      if (isSelected && st.bendPt) {
+        const [bhx, bhy] = worldToScreen(st.bendPt.x, st.bendPt.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(0, 200, 255, 0.9)';
+        ctx.beginPath();
+        ctx.arc(bhx, bhy, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.setLineDash([4, 4]);
+      }
+    } else {
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+    }
     ctx.stroke();
     ctx.setLineDash([]);
 
     // ROW edges — white dashed
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.strokeStyle = isSelected ? 'rgba(0, 200, 255, 0.4)' : 'rgba(255, 255, 255, 0.35)';
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 3]);
-    // Left
-    const [la1x, la1y] = worldToScreen(st.rowLeft[0].x, st.rowLeft[0].y);
-    const [la2x, la2y] = worldToScreen(st.rowLeft[1].x, st.rowLeft[1].y);
-    ctx.beginPath(); ctx.moveTo(la1x, la1y); ctx.lineTo(la2x, la2y); ctx.stroke();
-    // Right
-    const [ra1x, ra1y] = worldToScreen(st.rowRight[0].x, st.rowRight[0].y);
-    const [ra2x, ra2y] = worldToScreen(st.rowRight[1].x, st.rowRight[1].y);
-    ctx.beginPath(); ctx.moveTo(ra1x, ra1y); ctx.lineTo(ra2x, ra2y); ctx.stroke();
+    if (st.isCurved && st.curveROWLeft) {
+      // Draw curved ROW edges
+      ctx.beginPath();
+      const [rl0x, rl0y] = worldToScreen(st.curveROWLeft[0].x, st.curveROWLeft[0].y);
+      ctx.moveTo(rl0x, rl0y);
+      for (let ri = 1; ri < st.curveROWLeft.length; ri++) {
+        const [rlx, rly] = worldToScreen(st.curveROWLeft[ri].x, st.curveROWLeft[ri].y);
+        ctx.lineTo(rlx, rly);
+      }
+      ctx.stroke();
+      ctx.beginPath();
+      const [rr0x, rr0y] = worldToScreen(st.curveROWRight[0].x, st.curveROWRight[0].y);
+      ctx.moveTo(rr0x, rr0y);
+      for (let ri = 1; ri < st.curveROWRight.length; ri++) {
+        const [rrx, rry] = worldToScreen(st.curveROWRight[ri].x, st.curveROWRight[ri].y);
+        ctx.lineTo(rrx, rry);
+      }
+      ctx.stroke();
+    } else {
+      // Straight ROW edges
+      const [la1x, la1y] = worldToScreen(st.rowLeft[0].x, st.rowLeft[0].y);
+      const [la2x, la2y] = worldToScreen(st.rowLeft[1].x, st.rowLeft[1].y);
+      ctx.beginPath(); ctx.moveTo(la1x, la1y); ctx.lineTo(la2x, la2y); ctx.stroke();
+      const [ra1x, ra1y] = worldToScreen(st.rowRight[0].x, st.rowRight[0].y);
+      const [ra2x, ra2y] = worldToScreen(st.rowRight[1].x, st.rowRight[1].y);
+      ctx.beginPath(); ctx.moveTo(ra1x, ra1y); ctx.lineTo(ra2x, ra2y); ctx.stroke();
+    }
     ctx.setLineDash([]);
 
     // Draw curb returns for entry streets
@@ -5165,9 +5206,35 @@ function placeEntryAt(worldX, worldY) {
   }
   if (!bestProjPt) return;
 
-  // Create entry street perpendicular to boundary, extending inward
-  const entryLen = params.minLotDepth * 2 + params.rowWidth;
-  const endPt = { x: bestProjPt.x + bestNormal.x * entryLen, y: bestProjPt.y + bestNormal.y * entryLen };
+  // Create entry street perpendicular to boundary
+  // Extend inward until it hits the farthest street or boundary edge
+  let entryLen = params.minLotDepth * 2 + params.rowWidth;
+
+  // Find the nearest existing street that the entry would cross or reach
+  let bestStreetPt = null;
+  let bestStreetDist = Infinity;
+  for (const st of state.streets) {
+    const [sa, sb] = st.centerline;
+    // Project entry line onto this street
+    const ix = segSegIntersect(
+      bestProjPt,
+      { x: bestProjPt.x + bestNormal.x * 2000, y: bestProjPt.y + bestNormal.y * 2000 },
+      sa, sb
+    );
+    if (ix) {
+      const d = Math.hypot(ix.x - bestProjPt.x, ix.y - bestProjPt.y);
+      if (d > halfROW && d < bestStreetDist) {
+        bestStreetDist = d;
+        bestStreetPt = ix;
+      }
+    }
+  }
+
+  // If we found a street to connect to, extend to it; otherwise use default length
+  const endPt = bestStreetPt
+    ? { x: bestStreetPt.x, y: bestStreetPt.y }
+    : { x: bestProjPt.x + bestNormal.x * entryLen, y: bestProjPt.y + bestNormal.y * entryLen };
+
   const edgeA = state.vertices[bestEdgeIdx];
   const edgeB = state.vertices[(bestEdgeIdx+1) % state.vertices.length];
   const edx = edgeB.x - edgeA.x, edy = edgeB.y - edgeA.y;
@@ -5355,6 +5422,47 @@ function moveStreet(idx, dx, dy) {
   for (const pt of st.centerline) { pt.x += dx; pt.y += dy; }
   for (const pt of st.rowLeft) { pt.x += dx; pt.y += dy; }
   for (const pt of st.rowRight) { pt.x += dx; pt.y += dy; }
+  if (st.bendPt) { st.bendPt.x += dx; st.bendPt.y += dy; }
+}
+
+// Bend a street at the midpoint by applying a perpendicular offset
+function bendStreet(idx, offsetX, offsetY) {
+  const st = state.streets[idx];
+  const [a, b] = st.centerline;
+  const mx = (a.x + b.x) / 2 + offsetX;
+  const my = (a.y + b.y) / 2 + offsetY;
+  st.bendPt = { x: mx, y: my };
+
+  // Rebuild as 3-point polyline: start → bend → end
+  // Update ROW edges to follow the bend
+  const params = getDesignParams();
+  const halfROW = params.rowWidth / 2;
+
+  // Segment 1: a → bend
+  const dx1 = st.bendPt.x - a.x, dy1 = st.bendPt.y - a.y;
+  const len1 = Math.sqrt(dx1*dx1 + dy1*dy1) || 1;
+  const n1x = -dy1/len1, n1y = dx1/len1;
+
+  // Segment 2: bend → b
+  const dx2 = b.x - st.bendPt.x, dy2 = b.y - st.bendPt.y;
+  const len2 = Math.sqrt(dx2*dx2 + dy2*dy2) || 1;
+  const n2x = -dy2/len2, n2y = dx2/len2;
+
+  // Store the multi-segment data for rendering
+  st.isCurved = true;
+  st.curvePoints = [a, st.bendPt, b];
+  st.curveROWLeft = [
+    { x: a.x + n1x*halfROW, y: a.y + n1y*halfROW },
+    { x: st.bendPt.x + n1x*halfROW, y: st.bendPt.y + n1y*halfROW },
+    { x: st.bendPt.x + n2x*halfROW, y: st.bendPt.y + n2y*halfROW },
+    { x: b.x + n2x*halfROW, y: b.y + n2y*halfROW }
+  ];
+  st.curveROWRight = [
+    { x: a.x - n1x*halfROW, y: a.y - n1y*halfROW },
+    { x: st.bendPt.x - n1x*halfROW, y: st.bendPt.y - n1y*halfROW },
+    { x: st.bendPt.x - n2x*halfROW, y: st.bendPt.y - n2y*halfROW },
+    { x: b.x - n2x*halfROW, y: b.y - n2y*halfROW }
+  ];
 }
 
 // -- Regenerate lots from current streets (dynamic update) --
@@ -6156,11 +6264,20 @@ canvas.addEventListener('dblclick', function(e) {
 // Edit mode street dragging + Background image drag
 canvas.addEventListener('mousedown', function(e) {
   if (state.editMode && state.selectedStreet >= 0 && e.button === 0 && !e.shiftKey) {
-    state.draggingStreet = true;
     const rect = canvas.getBoundingClientRect();
     state.dragLastX = e.clientX - rect.left;
     state.dragLastY = e.clientY - rect.top;
-    canvas.style.cursor = 'move';
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl+drag = bend the street (pull to create curve)
+      state.bendingStreet = true;
+      state.draggingStreet = false;
+      canvas.style.cursor = 'ns-resize';
+    } else {
+      // Regular drag = move the street
+      state.draggingStreet = true;
+      state.bendingStreet = false;
+      canvas.style.cursor = 'move';
+    }
     e.preventDefault();
     return;
   }
@@ -6188,8 +6305,8 @@ canvas.addEventListener('mousedown', function(e) {
 });
 
 canvas.addEventListener('mousemove', function(e) {
-  // Street dragging in edit mode
-  if (state.draggingStreet && state.selectedStreet >= 0) {
+  // Street dragging or bending in edit mode
+  if ((state.draggingStreet || state.bendingStreet) && state.selectedStreet >= 0) {
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
@@ -6197,7 +6314,17 @@ canvas.addEventListener('mousemove', function(e) {
     const dy = sy - state.dragLastY;
     const worldDx = (dx / state.zoom) * state.scale;
     const worldDy = -(dy / state.zoom) * state.scale;
-    moveStreet(state.selectedStreet, worldDx, worldDy);
+
+    if (state.bendingStreet) {
+      // Accumulate bend offset
+      if (!state.bendAccumX) state.bendAccumX = 0;
+      if (!state.bendAccumY) state.bendAccumY = 0;
+      state.bendAccumX += worldDx;
+      state.bendAccumY += worldDy;
+      bendStreet(state.selectedStreet, state.bendAccumX, state.bendAccumY);
+    } else {
+      moveStreet(state.selectedStreet, worldDx, worldDy);
+    }
     state.dragLastX = sx;
     state.dragLastY = sy;
     render();
@@ -6226,8 +6353,16 @@ canvas.addEventListener('mouseup', function(e) {
   if (state.draggingStreet) {
     state.draggingStreet = false;
     canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
-    regenerateLots(); // Dynamic lot update after street move
+    regenerateLots();
     showToast('Street moved — lots regenerated', 'info');
+  }
+  if (state.bendingStreet) {
+    state.bendingStreet = false;
+    state.bendAccumX = 0;
+    state.bendAccumY = 0;
+    canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
+    regenerateLots();
+    showToast('Street curved — lots regenerated', 'info');
   }
   if (state.bgDragging) {
     state.bgDragging = false;
