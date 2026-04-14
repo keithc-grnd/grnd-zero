@@ -1195,12 +1195,13 @@ input[type="range"]::-moz-range-thumb {
       </div>
       <div class="panel-section-body">
         <p style="font-size:10px; color:var(--text-secondary); margin-bottom:8px; line-height:1.4;">
-          Divide site into sub-areas with independent density/layout targets.
+          Divide site into sub-areas with independent density/layout targets.<br>
+          Each area gets its own lot geometry criteria.
         </p>
 
         <div class="param-group-label">Quick Split by Acreage</div>
         <div class="form-row">
-          <label>Split Description</label>
+          <label>Split Direction</label>
           <select id="paSplitDir">
             <option value="south">Southerly</option>
             <option value="north">Northerly</option>
@@ -1208,26 +1209,74 @@ input[type="range"]::-moz-range-thumb {
             <option value="west">Westerly</option>
           </select>
         </div>
+        <div class="form-row">
+          <label>PA1 Acres</label>
+          <input type="number" id="paSplitAcres" value="10" min="0.5" max="999" step="0.5" />
+        </div>
+
+        <hr class="param-divider" />
+        <div class="param-group-label">PA1 — Lot Criteria</div>
         <div class="form-row-inline">
           <div>
-            <label>Acres</label>
-            <input type="number" id="paSplitAcres" value="10" min="0.5" max="999" step="0.5" />
+            <label>Target (du/ac)</label>
+            <input type="number" id="pa1Density" value="6" min="1" max="30" step="0.5" />
           </div>
           <div>
-            <label>Target (du/ac)</label>
-            <input type="number" id="paSplitDensity" value="6" min="1" max="30" step="0.5" />
+            <label>Layout</label>
+            <select id="pa1Pattern">
+              <option value="grid">Grid</option>
+              <option value="curvilinear" selected>Curvilinear</option>
+              <option value="cul-de-sac-loop">CDS Loop</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Min Width (ft)</label>
+            <input type="number" id="pa1LotWidth" value="60" min="20" max="200" step="5" />
+          </div>
+          <div>
+            <label>Min Depth (ft)</label>
+            <input type="number" id="pa1LotDepth" value="100" min="50" max="400" step="5" />
           </div>
         </div>
         <div class="form-row">
-          <label>Layout Pattern</label>
-          <select id="paSplitPattern">
-            <option value="grid">Grid</option>
-            <option value="curvilinear" selected>Curvilinear (preferred)</option>
-            <option value="cul-de-sac-loop">Cul-de-sac Loop</option>
-            <option value="spine-branches">Spine + Branches</option>
-          </select>
+          <label>Min Lot Area (sf)</label>
+          <input type="number" id="pa1LotArea" value="7200" min="1000" max="200000" step="100" />
         </div>
-        <button class="btn btn-primary" onclick="splitByAcreage()">Create Split</button>
+
+        <hr class="param-divider" />
+        <div class="param-group-label">PA2 — Balance (Lot Criteria)</div>
+        <div class="form-row-inline">
+          <div>
+            <label>Target (du/ac)</label>
+            <input type="number" id="pa2Density" value="4" min="1" max="30" step="0.5" />
+          </div>
+          <div>
+            <label>Layout</label>
+            <select id="pa2Pattern">
+              <option value="grid">Grid</option>
+              <option value="curvilinear" selected>Curvilinear</option>
+              <option value="cul-de-sac-loop">CDS Loop</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Min Width (ft)</label>
+            <input type="number" id="pa2LotWidth" value="70" min="20" max="200" step="5" />
+          </div>
+          <div>
+            <label>Min Depth (ft)</label>
+            <input type="number" id="pa2LotDepth" value="120" min="50" max="400" step="5" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Min Lot Area (sf)</label>
+          <input type="number" id="pa2LotArea" value="8400" min="1000" max="200000" step="100" />
+        </div>
+
+        <button class="btn btn-primary" onclick="splitByAcreage()" style="margin-top:8px;">Create Split</button>
 
         <hr class="param-divider" />
 
@@ -2941,6 +2990,7 @@ state.blocks = [];
 state.curvedStreets = [];
 state.culdesacs = [];
 state.knuckles = [];
+state.paSplitLines = [];
 
 // -- Polygon offset (inward shrink) via edge normal offset --
 function offsetPolygon(verts, dist) {
@@ -3982,6 +4032,7 @@ function clearLayout() {
   state.curvedStreets = [];
   state.culdesacs = [];
 state.knuckles = [];
+state.paSplitLines = [];
   document.getElementById('yieldTotal').textContent = '--';
   document.getElementById('yieldCompliant').textContent = '--';
   document.getElementById('yieldFlagged').textContent = '--';
@@ -4368,9 +4419,14 @@ function drawLots() {
     }
     ctx.fill();
 
-    // Lot border
-    ctx.strokeStyle = lot.compliant ? 'rgba(200, 200, 200, 0.4)' : 'rgba(244, 67, 54, 0.7)';
-    ctx.lineWidth = 1;
+    // Lot border — RED LINES for non-compliant, gray for compliant
+    if (!lot.compliant) {
+      ctx.strokeStyle = 'rgba(244, 67, 54, 0.9)';
+      ctx.lineWidth = 2.5;
+    } else {
+      ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
+      ctx.lineWidth = 1;
+    }
     ctx.stroke();
 
     // Label: lot number and area
@@ -4384,13 +4440,25 @@ function drawLots() {
       if (state.zoom > 0.3) {
         ctx.font = 'bold 11px Consolas, monospace';
         ctx.textAlign = 'center';
-        ctx.fillStyle = lot.compliant ? 'rgba(255,255,255,0.7)' : 'rgba(244,67,54,0.9)';
+        ctx.fillStyle = lot.compliant ? 'rgba(255,255,255,0.7)' : 'rgba(244,67,54,0.95)';
         ctx.fillText(lot.number, lx, ly - 4);
 
         if (state.zoom > 0.6) {
           ctx.font = '9px Consolas, monospace';
-          ctx.fillStyle = 'rgba(150,150,150,0.7)';
+          ctx.fillStyle = lot.compliant ? 'rgba(150,150,150,0.7)' : 'rgba(244,67,54,0.8)';
           ctx.fillText(Math.round(lot.area).toLocaleString() + ' sf', lx, ly + 9);
+          // Show violation reason for non-compliant lots
+          if (!lot.compliant && state.zoom > 0.8) {
+            ctx.font = 'bold 8px Consolas, monospace';
+            ctx.fillStyle = 'rgba(244,67,54,0.9)';
+            const minA = lot.minAreaRequired || 7200;
+            if (lot.area < minA) {
+              ctx.fillText('< ' + minA.toLocaleString() + ' sf min', lx, ly + 20);
+            }
+            if (lot.width < (lot.minWidthRequired || 60)) {
+              ctx.fillText('< ' + (lot.minWidthRequired || 60) + "' width min", lx, ly + 30);
+            }
+          }
         }
       }
     }
@@ -5245,6 +5313,20 @@ function moveStreet(idx, dx, dy) {
 }
 
 // -- Regenerate lots from current streets (dynamic update) --
+// Find which planning area a point belongs to, return its lot criteria or default
+function getLotCriteriaAt(wx, wy, defaultParams) {
+  for (const pa of state.planningAreas) {
+    if (pa.lotCriteria && pa.polygon.length >= 3 && pointInPolygon({ x: wx, y: wy }, pa.polygon)) {
+      return pa.lotCriteria;
+    }
+  }
+  return {
+    minLotWidth: defaultParams.minLotWidth,
+    minLotDepth: defaultParams.minLotDepth,
+    minLotArea: defaultParams.minLotArea
+  };
+}
+
 function regenerateLots() {
   if (!state.isClosed || state.streets.length === 0) return;
   const params = getDesignParams();
@@ -5321,10 +5403,18 @@ function regenerateLots() {
         }
         if (overlapsCds) continue;
 
+        // Check per-PA criteria for this lot's location
+        const lotCx = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
+        const lotCy = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
+        const lotCrit = getLotCriteriaAt(lotCx, lotCy, params);
+        const isCompliant = area >= lotCrit.minLotArea && actualWidth >= lotCrit.minLotWidth;
+
         state.lots.push({
           polygon: clipped, area, number: lotNum++,
-          compliant: area >= params.minLotArea,
-          width: actualWidth, depth: params.minLotDepth
+          compliant: isCompliant,
+          width: actualWidth, depth: params.minLotDepth,
+          minAreaRequired: lotCrit.minLotArea,
+          minWidthRequired: lotCrit.minLotWidth
         });
       }
     }
@@ -5415,25 +5505,51 @@ function splitByAcreage() {
   const dirLabel = dir.charAt(0).toUpperCase() + dir.slice(1);
   const oppLabel = dir === 'south' ? 'North' : dir === 'north' ? 'South' : dir === 'east' ? 'West' : 'East';
 
+  // Store the split line for rendering
+  state.paSplitLines = state.paSplitLines || [];
+  // Find where split line intersects the boundary
+  const splitLineSegs = splitAxis === 'y'
+    ? clipLineToPolygon({ x: minX - 200, y: splitVal }, { x: maxX + 200, y: splitVal }, state.vertices)
+    : clipLineToPolygon({ x: splitVal, y: minY - 200 }, { x: splitVal, y: maxY + 200 }, state.vertices);
+  state.paSplitLines.push(...splitLineSegs);
+
+  // Get per-PA criteria from UI
+  const pa1Criteria = {
+    minLotWidth: parseFloat(document.getElementById('pa1LotWidth').value) || 60,
+    minLotDepth: parseFloat(document.getElementById('pa1LotDepth').value) || 100,
+    minLotArea: parseFloat(document.getElementById('pa1LotArea').value) || 7200,
+    targetDensity: parseFloat(document.getElementById('pa1Density').value) || 6,
+    layoutPattern: document.getElementById('pa1Pattern').value
+  };
+  const pa2Criteria = {
+    minLotWidth: parseFloat(document.getElementById('pa2LotWidth').value) || 70,
+    minLotDepth: parseFloat(document.getElementById('pa2LotDepth').value) || 120,
+    minLotArea: parseFloat(document.getElementById('pa2LotArea').value) || 8400,
+    targetDensity: parseFloat(document.getElementById('pa2Density').value) || 4,
+    layoutPattern: document.getElementById('pa2Pattern').value
+  };
+
   if (areaA.length >= 3) {
     state.planningAreas.push({
       name: 'PA1 — ' + dirLabel + ' ' + targetAcres + ' ac',
-      targetDensity: targetDensity,
+      targetDensity: pa1Criteria.targetDensity,
       polygon: areaA,
       color: PA_COLORS[state.planningAreas.length % PA_COLORS.length],
       area: polygonArea(areaA),
-      layoutPattern: pattern
+      layoutPattern: pa1Criteria.layoutPattern,
+      lotCriteria: pa1Criteria
     });
   }
   if (areaB.length >= 3) {
     const balanceAcres = (polygonArea(areaB) / 43560).toFixed(1);
     state.planningAreas.push({
       name: 'PA2 — ' + oppLabel + ' balance (' + balanceAcres + ' ac)',
-      targetDensity: targetDensity,
+      targetDensity: pa2Criteria.targetDensity,
       polygon: areaB,
       color: PA_COLORS[state.planningAreas.length % PA_COLORS.length],
       area: polygonArea(areaB),
-      layoutPattern: pattern
+      layoutPattern: pa2Criteria.layoutPattern,
+      lotCriteria: pa2Criteria
     });
   }
 
@@ -5528,17 +5644,46 @@ function drawPlanningAreas() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Label
+    // Label with lot criteria
     let cx = 0, cy = 0;
     for (const p of pa.polygon) { cx += p.x; cy += p.y; }
     cx /= pa.polygon.length; cy /= pa.polygon.length;
     const [lx, ly] = worldToScreen(cx, cy);
-    ctx.font = 'bold 12px Segoe UI, sans-serif';
+    ctx.font = 'bold 13px Segoe UI, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillStyle = pa.color.replace('0.25', '0.9');
-    ctx.fillText(pa.name, lx, ly - 6);
+    ctx.fillStyle = pa.color.replace('0.25', '0.95');
+    ctx.fillText(pa.name, lx, ly - 14);
     ctx.font = '10px Consolas, monospace';
-    ctx.fillText(pa.targetDensity + ' du/ac', lx, ly + 8);
+    ctx.fillStyle = pa.color.replace('0.25', '0.8');
+    ctx.fillText(pa.targetDensity + ' du/ac  |  ' + (pa.area/43560).toFixed(1) + ' ac', lx, ly + 2);
+    if (pa.lotCriteria && state.zoom > 0.3) {
+      const lc = pa.lotCriteria;
+      ctx.font = '9px Consolas, monospace';
+      ctx.fillStyle = pa.color.replace('0.25', '0.6');
+      ctx.fillText('Min: ' + lc.minLotWidth + "'W x " + lc.minLotDepth + "'D  |  " + lc.minLotArea.toLocaleString() + ' sf', lx, ly + 16);
+      ctx.fillText('Layout: ' + (lc.layoutPattern || 'curvilinear'), lx, ly + 28);
+    }
+  }
+
+  // Draw PA split dividing lines (solid, prominent)
+  if (state.paSplitLines) {
+    for (const seg of state.paSplitLines) {
+      const [sx1, sy1] = worldToScreen(seg[0].x, seg[0].y);
+      const [sx2, sy2] = worldToScreen(seg[1].x, seg[1].y);
+      // Thick solid line
+      ctx.strokeStyle = 'rgba(255, 100, 100, 0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(sx1, sy1);
+      ctx.lineTo(sx2, sy2);
+      ctx.stroke();
+      // Label at midpoint
+      const mx = (sx1+sx2)/2, my = (sy1+sy2)/2;
+      ctx.font = 'bold 10px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255, 100, 100, 0.9)';
+      ctx.fillText('PA BOUNDARY', mx, my - 8);
+    }
   }
 
   // Draw in-progress area
