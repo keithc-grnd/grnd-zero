@@ -5501,8 +5501,6 @@ function splitByAcreage() {
   }
   const dir = document.getElementById('paSplitDir').value;
   const targetAcres = parseFloat(document.getElementById('paSplitAcres').value) || 10;
-  const targetDensity = parseFloat(document.getElementById('paSplitDensity').value) || 6;
-  const pattern = document.getElementById('paSplitPattern').value;
   const targetSqFt = targetAcres * 43560;
   const totalSqFt = calcArea(state.vertices);
 
@@ -5573,18 +5571,18 @@ function splitByAcreage() {
 
   // Get per-PA criteria from UI
   const pa1Criteria = {
-    minLotWidth: parseFloat(document.getElementById('pa1LotWidth').value) || 60,
-    minLotDepth: parseFloat(document.getElementById('pa1LotDepth').value) || 100,
-    minLotArea: parseFloat(document.getElementById('pa1LotArea').value) || 7200,
-    targetDensity: parseFloat(document.getElementById('pa1Density').value) || 6,
-    layoutPattern: document.getElementById('pa1Pattern').value
+    minLotWidth: parseFloat((document.getElementById('pa1LotWidth')||{}).value) || 60,
+    minLotDepth: parseFloat((document.getElementById('pa1LotDepth')||{}).value) || 100,
+    minLotArea: parseFloat((document.getElementById('pa1LotArea')||{}).value) || 7200,
+    targetDensity: parseFloat((document.getElementById('pa1Density')||{}).value) || 6,
+    layoutPattern: (document.getElementById('pa1Pattern')||{}).value || 'curvilinear'
   };
   const pa2Criteria = {
-    minLotWidth: parseFloat(document.getElementById('pa2LotWidth').value) || 70,
-    minLotDepth: parseFloat(document.getElementById('pa2LotDepth').value) || 120,
-    minLotArea: parseFloat(document.getElementById('pa2LotArea').value) || 8400,
-    targetDensity: parseFloat(document.getElementById('pa2Density').value) || 4,
-    layoutPattern: document.getElementById('pa2Pattern').value
+    minLotWidth: parseFloat((document.getElementById('pa2LotWidth')||{}).value) || 70,
+    minLotDepth: parseFloat((document.getElementById('pa2LotDepth')||{}).value) || 120,
+    minLotArea: parseFloat((document.getElementById('pa2LotArea')||{}).value) || 8400,
+    targetDensity: parseFloat((document.getElementById('pa2Density')||{}).value) || 4,
+    layoutPattern: (document.getElementById('pa2Pattern')||{}).value || 'curvilinear'
   };
 
   if (areaA.length >= 3) {
