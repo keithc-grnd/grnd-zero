@@ -1695,10 +1695,12 @@ function showToast(msg, type) {
 // ============================================
 
 // Layout result storage
-state.streets = [];      // { centerline: [{x,y},...], rowLeft: [...], rowRight: [...] }
-state.lots = [];          // { polygon: [{x,y},...], area: Number, number: Number, compliant: Boolean }
+state.streets = [];
+state.lots = [];
 state.bufferedBoundary = [];
 state.blocks = [];
+state.curvedStreets = [];
+state.culdesacs = [];
 
 // -- Polygon offset (inward shrink) via edge normal offset --
 function offsetPolygon(verts, dist) {
@@ -1859,13 +1861,9 @@ function generateLayout() {
     return;
   }
   const params = getDesignParams();
-  if (params.layoutPattern !== 'grid') {
-    showToast('Phase 3 supports Grid layout. Other patterns coming in future phases.', 'warning');
-    return;
-  }
 
   clearLayout();
-  showToast('Generating grid layout...', 'info');
+  showToast('Generating ' + params.layoutPattern + ' layout...', 'info');
 
   // Step 1: Offset boundary inward by perimeter setback
   const buffer = offsetPolygon(state.vertices, params.perimeterSetback);
@@ -1875,7 +1873,29 @@ function generateLayout() {
   }
   state.bufferedBoundary = buffer;
 
-  // Step 2: Compute bounding box of buffered polygon
+  // Dispatch to the selected engine
+  if (params.layoutPattern === 'grid') {
+    generateGridLayout(buffer, params);
+  } else if (params.layoutPattern === 'curvilinear') {
+    generateCurvilinearLayout(buffer, params);
+  } else if (params.layoutPattern === 'cul-de-sac-loop') {
+    generateCulDeSacLoopLayout(buffer, params);
+  } else if (params.layoutPattern === 'spine-branches') {
+    generateCurvilinearLayout(buffer, params); // Spine+branches uses curvilinear engine
+  } else {
+    showToast('Unknown layout pattern', 'error');
+    return;
+  }
+
+  updateYieldSummary(params);
+  render();
+  showToast('Layout generated: ' + state.lots.length + ' lots', 'success');
+}
+
+// ============================================
+// GRID ENGINE (Phase 3)
+// ============================================
+function generateGridLayout(buffer, params) {
   const xs = buffer.map(v => v.x);
   const ys = buffer.map(v => v.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -1884,68 +1904,42 @@ function generateLayout() {
   const cy = (minY + maxY) / 2;
   const diag = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
 
-  // Step 3: Orientation angle (convert to radians, 0 = N-S streets)
   const angleDeg = params.streetOrientation;
   const angleRad = (angleDeg * Math.PI) / 180;
-  // Street direction vector (primary streets run along this direction)
   const dirX = Math.sin(angleRad);
   const dirY = Math.cos(angleRad);
-  // Perpendicular direction (cross streets)
   const perpX = Math.cos(angleRad);
   const perpY = -Math.sin(angleRad);
 
-  // Step 4: Block width = 2 * lotDepth + ROW width
   const blockWidth = 2 * params.minLotDepth + params.rowWidth;
-  // Cross-street interval: lots-per-block * lotWidth + ROW
-  const lotsPerBlock = Math.max(1, Math.round(300 / params.minLotWidth)); // ~300ft default block length
+  const lotsPerBlock = Math.max(1, Math.round(300 / params.minLotWidth));
   const blockLength = lotsPerBlock * params.minLotWidth + params.rowWidth;
-
-  // Step 5: Generate parallel street centerlines (perpendicular to lot depth direction)
-  // Streets run along `dir` direction, spaced along `perp` direction
   const halfRange = diag;
-  const streetsCL = [];
+  const halfROW = params.rowWidth / 2;
 
-  // Calculate how many streets we need
-  const startOffset = -halfRange;
-  const endOffset = halfRange;
-
-  // Primary streets (running along dir direction, spaced along perp)
   const primaryStreets = [];
-  for (let d = startOffset; d <= endOffset; d += blockWidth) {
+  for (let d = -halfRange; d <= halfRange; d += blockWidth) {
     const ox = cx + perpX * d;
     const oy = cy + perpY * d;
     const p1 = { x: ox - dirX * halfRange, y: oy - dirY * halfRange };
     const p2 = { x: ox + dirX * halfRange, y: oy + dirY * halfRange };
     const segs = clipLineToPolygon(p1, p2, buffer);
     for (const seg of segs) {
-      primaryStreets.push({
-        centerline: seg,
-        perpOffset: d,
-        isPrimary: true
-      });
+      primaryStreets.push({ centerline: seg, perpOffset: d, isPrimary: true });
     }
   }
 
-  // Cross streets (running along perp direction, spaced along dir)
   const crossStreets = [];
-  for (let d = startOffset; d <= endOffset; d += blockLength) {
+  for (let d = -halfRange; d <= halfRange; d += blockLength) {
     const ox = cx + dirX * d;
     const oy = cy + dirY * d;
     const p1 = { x: ox - perpX * halfRange, y: oy - perpY * halfRange };
     const p2 = { x: ox + perpX * halfRange, y: oy + perpY * halfRange };
     const segs = clipLineToPolygon(p1, p2, buffer);
     for (const seg of segs) {
-      crossStreets.push({
-        centerline: seg,
-        dirOffset: d,
-        isPrimary: false
-      });
+      crossStreets.push({ centerline: seg, dirOffset: d, isPrimary: false });
     }
   }
-
-  // Build street objects with ROW edges
-  const halfROW = params.rowWidth / 2;
-  state.streets = [];
 
   for (const st of primaryStreets) {
     const [a, b] = st.centerline;
@@ -1978,12 +1972,7 @@ function generateLayout() {
     });
   }
 
-  // Step 6: Generate blocks — rectangles between adjacent primary and cross street ROW edges
   generateBlocks(primaryStreets, crossStreets, params, buffer, dirX, dirY, perpX, perpY, cx, cy, halfROW);
-
-  updateYieldSummary(params);
-  render();
-  showToast('Layout generated: ' + state.lots.length + ' lots', 'success');
 }
 
 function generateBlocks(primaryStreets, crossStreets, params, buffer, dirX, dirY, perpX, perpY, cx, cy, halfROW) {
@@ -2103,11 +2092,514 @@ function generateBlocks(primaryStreets, crossStreets, params, buffer, dirX, dirY
   }
 }
 
+// ============================================
+// CURVILINEAR ENGINE (Phase 4)
+// ============================================
+
+// Bezier curve evaluation: cubic B(t)
+function cubicBezier(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  return {
+    x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
+    y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y
+  };
+}
+
+// Bezier tangent (derivative)
+function cubicBezierTangent(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  const tx = 3*u*u*(p1.x-p0.x) + 6*u*t*(p2.x-p1.x) + 3*t*t*(p3.x-p2.x);
+  const ty = 3*u*u*(p1.y-p0.y) + 6*u*t*(p2.y-p1.y) + 3*t*t*(p3.y-p2.y);
+  const len = Math.sqrt(tx*tx + ty*ty) || 1;
+  return { x: tx/len, y: ty/len };
+}
+
+// Sample a Bezier curve into polyline points
+function sampleBezier(p0, p1, p2, p3, numPts) {
+  const pts = [];
+  for (let i = 0; i <= numPts; i++) {
+    pts.push(cubicBezier(p0, p1, p2, p3, i / numPts));
+  }
+  return pts;
+}
+
+// Find the longest axis of a polygon (two farthest vertices)
+function longestAxis(poly) {
+  let maxDist = 0, a = 0, b = 1;
+  for (let i = 0; i < poly.length; i++) {
+    for (let j = i + 1; j < poly.length; j++) {
+      const d = Math.hypot(poly[j].x - poly[i].x, poly[j].y - poly[i].y);
+      if (d > maxDist) { maxDist = d; a = i; b = j; }
+    }
+  }
+  return [poly[a], poly[b], maxDist];
+}
+
+// Generate cul-de-sac lots radially around a center point
+function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumStart, params, buffer) {
+  const lots = [];
+  const outerR = rowRadius + lotDepth;
+  const circumference = 2 * Math.PI * rowRadius;
+  const numLots = Math.max(5, Math.floor(circumference / minLotWidth));
+  const angleStep = (2 * Math.PI) / numLots;
+
+  for (let i = 0; i < numLots; i++) {
+    const a1 = i * angleStep - Math.PI / 2;
+    const a2 = (i + 1) * angleStep - Math.PI / 2;
+    const lotPoly = [
+      { x: center.x + Math.cos(a1) * rowRadius, y: center.y + Math.sin(a1) * rowRadius },
+      { x: center.x + Math.cos(a1) * outerR, y: center.y + Math.sin(a1) * outerR },
+      { x: center.x + Math.cos(a2) * outerR, y: center.y + Math.sin(a2) * outerR },
+      { x: center.x + Math.cos(a2) * rowRadius, y: center.y + Math.sin(a2) * rowRadius }
+    ];
+
+    const clipped = clipPolygonSH(lotPoly, buffer);
+    if (clipped.length < 3) continue;
+    const area = polygonArea(clipped);
+    if (area < 10) continue;
+
+    lots.push({
+      polygon: clipped,
+      area: area,
+      number: lotNumStart + i,
+      compliant: area >= params.minLotArea,
+      width: rowRadius * angleStep,
+      depth: lotDepth
+    });
+  }
+  return lots;
+}
+
+function generateCurvilinearLayout(buffer, params) {
+  const xs = buffer.map(v => v.x);
+  const ys = buffer.map(v => v.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const halfROW = params.rowWidth / 2;
+
+  // 1. Find longest axis for spine road
+  const [axA, axB, axLen] = longestAxis(buffer);
+
+  // 2. Generate spine road as cubic Bezier
+  // Spine goes from near axA to near axB, curving through interior
+  const inset = params.rowWidth * 1.5;
+  const axDx = axB.x - axA.x, axDy = axB.y - axA.y;
+  const axL = Math.sqrt(axDx*axDx + axDy*axDy) || 1;
+  const ux = axDx/axL, uy = axDy/axL;
+  // Perpendicular for curve offset
+  const px = -uy, py = ux;
+
+  const spineP0 = { x: axA.x + ux * inset, y: axA.y + uy * inset };
+  const spineP3 = { x: axB.x - ux * inset, y: axB.y - uy * inset };
+  // Control points curve toward centroid for organic shape
+  const curveMag = axLen * 0.2;
+  const spineP1 = {
+    x: spineP0.x + ux * axLen * 0.3 + px * curveMag,
+    y: spineP0.y + uy * axLen * 0.3 + py * curveMag
+  };
+  const spineP2 = {
+    x: spineP3.x - ux * axLen * 0.3 - px * curveMag * 0.5,
+    y: spineP3.y - uy * axLen * 0.3 - py * curveMag * 0.5
+  };
+
+  // Sample spine into polyline
+  const spinePoints = sampleBezier(spineP0, spineP1, spineP2, spineP3, 60);
+
+  // Store spine as a curved street
+  state.curvedStreets = state.curvedStreets || [];
+  state.curvedStreets.push({
+    points: spinePoints,
+    p0: spineP0, p1: spineP1, p2: spineP2, p3: spineP3,
+    isSpine: true
+  });
+
+  // Build spine ROW edges
+  for (let i = 0; i < spinePoints.length - 1; i++) {
+    const a = spinePoints[i], b = spinePoints[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const nx = -dy/len, ny = dx/len;
+    state.streets.push({
+      centerline: [a, b],
+      rowLeft: [
+        { x: a.x + nx * halfROW, y: a.y + ny * halfROW },
+        { x: b.x + nx * halfROW, y: b.y + ny * halfROW }
+      ],
+      rowRight: [
+        { x: a.x - nx * halfROW, y: a.y - ny * halfROW },
+        { x: b.x - nx * halfROW, y: b.y - ny * halfROW }
+      ],
+      isPrimary: true
+    });
+  }
+
+  // 3. Generate branch streets perpendicular to spine, spaced at block-depth intervals
+  const blockDepth = 2 * params.minLotDepth + params.rowWidth;
+  const spineLen = spinePoints.reduce((sum, p, i) => {
+    if (i === 0) return 0;
+    return sum + Math.hypot(p.x - spinePoints[i-1].x, p.y - spinePoints[i-1].y);
+  }, 0);
+
+  // Walk along spine at block-depth intervals
+  let accDist = 0;
+  const branchPoints = []; // {point, tangent, normal, t}
+  let targetDist = blockDepth;
+
+  for (let i = 1; i < spinePoints.length; i++) {
+    const segLen = Math.hypot(
+      spinePoints[i].x - spinePoints[i-1].x,
+      spinePoints[i].y - spinePoints[i-1].y
+    );
+    accDist += segLen;
+    if (accDist >= targetDist && targetDist < spineLen - blockDepth * 0.5) {
+      const t = i / spinePoints.length;
+      const tang = cubicBezierTangent(spineP0, spineP1, spineP2, spineP3, t);
+      const norm = { x: -tang.y, y: tang.x };
+      branchPoints.push({ point: spinePoints[i], tangent: tang, normal: norm, t });
+      targetDist = accDist + blockDepth;
+    }
+  }
+
+  // Generate branches on both sides of spine
+  let lotNum = 1;
+  const branchLen = params.minLotDepth * 2 + params.rowWidth;
+
+  for (const bp of branchPoints) {
+    for (const side of [1, -1]) {
+      const brStart = {
+        x: bp.point.x + bp.normal.x * halfROW * side,
+        y: bp.point.y + bp.normal.y * halfROW * side
+      };
+      const brEnd = {
+        x: bp.point.x + bp.normal.x * (branchLen + halfROW) * side,
+        y: bp.point.y + bp.normal.y * (branchLen + halfROW) * side
+      };
+
+      // Check if branch endpoint is inside buffer
+      if (!pointInPolygon(brEnd, buffer)) {
+        // Clip to boundary — find intersection
+        const clipped = clipLineToPolygon(brStart, brEnd, buffer);
+        if (clipped.length === 0) continue;
+        brEnd.x = clipped[0][1].x;
+        brEnd.y = clipped[0][1].y;
+      }
+
+      const brDx = brEnd.x - brStart.x, brDy = brEnd.y - brStart.y;
+      const brL = Math.sqrt(brDx*brDx + brDy*brDy);
+      if (brL < params.minLotDepth) continue;
+
+      const brUx = brDx/brL, brUy = brDy/brL;
+      const brNx = -brUy, brNy = brUx;
+
+      // Branch street segments
+      state.streets.push({
+        centerline: [brStart, brEnd],
+        rowLeft: [
+          { x: brStart.x + brNx * halfROW, y: brStart.y + brNy * halfROW },
+          { x: brEnd.x + brNx * halfROW, y: brEnd.y + brNy * halfROW }
+        ],
+        rowRight: [
+          { x: brStart.x - brNx * halfROW, y: brStart.y - brNy * halfROW },
+          { x: brEnd.x - brNx * halfROW, y: brEnd.y - brNy * halfROW }
+        ],
+        isPrimary: false
+      });
+
+      // Lots along branch — perpendicular to branch direction
+      const lotableLen = brL - halfROW;
+      const numLots = Math.max(1, Math.floor(lotableLen / params.minLotDepth));
+      const actualDepth = lotableLen / numLots;
+
+      // Lots on both sides of branch street
+      for (const lotSide of [1, -1]) {
+        const numWidthLots = Math.max(1, Math.floor(params.minLotDepth / params.minLotWidth));
+
+        for (let li = 0; li < numLots; li++) {
+          const d0 = halfROW + li * actualDepth;
+          const d1 = halfROW + (li + 1) * actualDepth;
+
+          const lotPoly = [
+            {
+              x: brStart.x + brUx * d0 + brNx * halfROW * lotSide,
+              y: brStart.y + brUy * d0 + brNy * halfROW * lotSide
+            },
+            {
+              x: brStart.x + brUx * d1 + brNx * halfROW * lotSide,
+              y: brStart.y + brUy * d1 + brNy * halfROW * lotSide
+            },
+            {
+              x: brStart.x + brUx * d1 + brNx * (halfROW + params.minLotWidth) * lotSide,
+              y: brStart.y + brUy * d1 + brNy * (halfROW + params.minLotWidth) * lotSide
+            },
+            {
+              x: brStart.x + brUx * d0 + brNx * (halfROW + params.minLotWidth) * lotSide,
+              y: brStart.y + brUy * d0 + brNy * (halfROW + params.minLotWidth) * lotSide
+            }
+          ];
+
+          const clipped = clipPolygonSH(lotPoly, buffer);
+          if (clipped.length < 3) continue;
+          const area = polygonArea(clipped);
+          if (area < 10) continue;
+
+          state.lots.push({
+            polygon: clipped, area, number: lotNum++,
+            compliant: area >= params.minLotArea,
+            width: params.minLotWidth, depth: actualDepth
+          });
+        }
+      }
+
+      // Cul-de-sac at end of branch if enough room
+      if (brL > params.minLotDepth * 1.5) {
+        const cdsCenter = {
+          x: brEnd.x - brUx * params.cdsRadius,
+          y: brEnd.y - brUy * params.cdsRadius
+        };
+        if (pointInPolygon(cdsCenter, buffer)) {
+          // Store cul-de-sac circle for rendering
+          state.culdesacs = state.culdesacs || [];
+          state.culdesacs.push({
+            center: cdsCenter,
+            rowRadius: params.cdsRadius,
+            pavedRadius: params.cdsRadius - 8
+          });
+
+          // Generate lots around the cul-de-sac bulb
+          const cdsLots = generateCulDeSacLots(
+            cdsCenter, params.cdsRadius, params.minLotDepth,
+            params.minLotWidth, lotNum, params, buffer
+          );
+          state.lots.push(...cdsLots);
+          lotNum += cdsLots.length;
+        }
+      }
+    }
+  }
+
+  // Generate lots along spine (between branch intersections)
+  const spineLotsPerSide = Math.floor(spineLen / params.minLotWidth);
+  const spineLotWidth = spineLen / Math.max(1, spineLotsPerSide);
+
+  for (const side of [1, -1]) {
+    accDist = 0;
+    for (let i = 1; i < spinePoints.length; i++) {
+      const segLen = Math.hypot(
+        spinePoints[i].x - spinePoints[i-1].x,
+        spinePoints[i].y - spinePoints[i-1].y
+      );
+      const prevDist = accDist;
+      accDist += segLen;
+
+      // Place lot at each lotWidth interval
+      const lotStart = Math.floor(prevDist / spineLotWidth);
+      const lotEnd = Math.floor(accDist / spineLotWidth);
+      if (lotStart === lotEnd) continue;
+
+      const a = spinePoints[i-1], b = spinePoints[i];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const nx = -dy/len * side, ny = dx/len * side;
+
+      const lotPoly = [
+        { x: a.x + nx * halfROW, y: a.y + ny * halfROW },
+        { x: b.x + nx * halfROW, y: b.y + ny * halfROW },
+        { x: b.x + nx * (halfROW + params.minLotDepth), y: b.y + ny * (halfROW + params.minLotDepth) },
+        { x: a.x + nx * (halfROW + params.minLotDepth), y: a.y + ny * (halfROW + params.minLotDepth) }
+      ];
+
+      const clipped = clipPolygonSH(lotPoly, buffer);
+      if (clipped.length < 3) continue;
+      const area = polygonArea(clipped);
+      if (area < 10) continue;
+
+      state.lots.push({
+        polygon: clipped, area, number: lotNum++,
+        compliant: area >= params.minLotArea,
+        width: spineLotWidth, depth: params.minLotDepth
+      });
+    }
+  }
+}
+
+// ============================================
+// CUL-DE-SAC LOOP ENGINE (Phase 4)
+// ============================================
+
+function generateCulDeSacLoopLayout(buffer, params) {
+  const xs = buffer.map(v => v.x);
+  const ys = buffer.map(v => v.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const halfROW = params.rowWidth / 2;
+
+  // 1. Create loop road: offset boundary inward by lotDepth + ROW/2
+  const loopOffset = params.minLotDepth + halfROW;
+  const loopPath = offsetPolygon(buffer, loopOffset);
+  if (loopPath.length < 3) {
+    showToast('Boundary too small for cul-de-sac loop layout', 'warning');
+    return;
+  }
+
+  state.curvedStreets = state.curvedStreets || [];
+  state.curvedStreets.push({ points: [...loopPath, loopPath[0]], isLoop: true });
+
+  // Build loop street segments (ROW edges)
+  for (let i = 0; i < loopPath.length; i++) {
+    const j = (i + 1) % loopPath.length;
+    const a = loopPath[i], b = loopPath[j];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const nx = -dy/len, ny = dx/len;
+
+    state.streets.push({
+      centerline: [a, b],
+      rowLeft: [
+        { x: a.x + nx * halfROW, y: a.y + ny * halfROW },
+        { x: b.x + nx * halfROW, y: b.y + ny * halfROW }
+      ],
+      rowRight: [
+        { x: a.x - nx * halfROW, y: a.y - ny * halfROW },
+        { x: b.x - nx * halfROW, y: b.y - ny * halfROW }
+      ],
+      isPrimary: true
+    });
+  }
+
+  // 2. Find entry point — closest boundary edge to a loop point
+  let bestDist = Infinity, entryBoundary = null, entryLoop = null;
+  for (let i = 0; i < state.vertices.length; i++) {
+    const j = (i + 1) % state.vertices.length;
+    const mx = (state.vertices[i].x + state.vertices[j].x) / 2;
+    const my = (state.vertices[i].y + state.vertices[j].y) / 2;
+    for (const lp of loopPath) {
+      const d = Math.hypot(lp.x - mx, lp.y - my);
+      if (d < bestDist) {
+        bestDist = d;
+        entryBoundary = { x: mx, y: my };
+        entryLoop = lp;
+      }
+    }
+  }
+
+  // Entry street from boundary to loop
+  if (entryBoundary && entryLoop) {
+    const dx = entryLoop.x - entryBoundary.x;
+    const dy = entryLoop.y - entryBoundary.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const nx = -dy/len, ny = dx/len;
+    state.streets.push({
+      centerline: [entryBoundary, entryLoop],
+      rowLeft: [
+        { x: entryBoundary.x + nx * halfROW, y: entryBoundary.y + ny * halfROW },
+        { x: entryLoop.x + nx * halfROW, y: entryLoop.y + ny * halfROW }
+      ],
+      rowRight: [
+        { x: entryBoundary.x - nx * halfROW, y: entryBoundary.y - ny * halfROW },
+        { x: entryLoop.x - nx * halfROW, y: entryLoop.y - ny * halfROW }
+      ],
+      isPrimary: false
+    });
+  }
+
+  // 3. Outer lots — between boundary (buffer edge) and outer loop ROW
+  let lotNum = 1;
+  const outerROW = offsetPolygon(buffer, loopOffset - halfROW); // outer edge of loop ROW
+
+  for (let i = 0; i < loopPath.length; i++) {
+    const j = (i + 1) % loopPath.length;
+    const a = loopPath[i], b = loopPath[j];
+    const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+    const numLots = Math.max(1, Math.floor(edgeLen / params.minLotWidth));
+    const actualWidth = edgeLen / numLots;
+
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ux = dx/len, uy = dy/len;
+    // Outward normal (toward boundary)
+    const nx = -(-dy/len), ny = -(dx/len);
+
+    for (let li = 0; li < numLots; li++) {
+      const t0 = li / numLots, t1 = (li + 1) / numLots;
+      const p0 = { x: a.x + dx * t0, y: a.y + dy * t0 };
+      const p1 = { x: a.x + dx * t1, y: a.y + dy * t1 };
+
+      // Lot from outer ROW edge to boundary buffer
+      const lotPoly = [
+        { x: p0.x + nx * halfROW, y: p0.y + ny * halfROW },
+        { x: p1.x + nx * halfROW, y: p1.y + ny * halfROW },
+        { x: p1.x + nx * (halfROW + params.minLotDepth), y: p1.y + ny * (halfROW + params.minLotDepth) },
+        { x: p0.x + nx * (halfROW + params.minLotDepth), y: p0.y + ny * (halfROW + params.minLotDepth) }
+      ];
+
+      const clipped = clipPolygonSH(lotPoly, buffer);
+      if (clipped.length < 3) continue;
+      const area = polygonArea(clipped);
+      if (area < 10) continue;
+
+      state.lots.push({
+        polygon: clipped, area, number: lotNum++,
+        compliant: area >= params.minLotArea,
+        width: actualWidth, depth: params.minLotDepth
+      });
+    }
+  }
+
+  // 4. Inner lots — inside the loop, backing to interior open space
+  const innerROW = offsetPolygon(buffer, loopOffset + halfROW);
+  if (innerROW.length >= 3) {
+    const innerLotBound = offsetPolygon(buffer, loopOffset + halfROW + params.minLotDepth);
+
+    for (let i = 0; i < loopPath.length; i++) {
+      const j = (i + 1) % loopPath.length;
+      const a = loopPath[i], b = loopPath[j];
+      const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+      const numLots = Math.max(1, Math.floor(edgeLen / params.minLotWidth));
+
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      // Inward normal (toward center)
+      const nx = -dy/len, ny = dx/len;
+
+      for (let li = 0; li < numLots; li++) {
+        const t0 = li / numLots, t1 = (li + 1) / numLots;
+        const p0 = { x: a.x + dx * t0, y: a.y + dy * t0 };
+        const p1 = { x: a.x + dx * t1, y: a.y + dy * t1 };
+
+        const lotPoly = [
+          { x: p0.x - nx * halfROW, y: p0.y - ny * halfROW },
+          { x: p1.x - nx * halfROW, y: p1.y - ny * halfROW },
+          { x: p1.x - nx * (halfROW + params.minLotDepth), y: p1.y - ny * (halfROW + params.minLotDepth) },
+          { x: p0.x - nx * (halfROW + params.minLotDepth), y: p0.y - ny * (halfROW + params.minLotDepth) }
+        ];
+
+        // Clip inner lots to the innerROW polygon
+        const clipped = clipPolygonSH(lotPoly, innerROW.length >= 3 ? innerROW : buffer);
+        if (clipped.length < 3) continue;
+        const area = polygonArea(clipped);
+        if (area < 10) continue;
+
+        state.lots.push({
+          polygon: clipped, area, number: lotNum++,
+          compliant: area >= params.minLotArea,
+          width: edgeLen / numLots, depth: params.minLotDepth
+        });
+      }
+    }
+  }
+}
+
 function clearLayout() {
   state.streets = [];
   state.lots = [];
   state.blocks = [];
   state.bufferedBoundary = [];
+  state.curvedStreets = [];
+  state.culdesacs = [];
   document.getElementById('yieldTotal').textContent = '--';
   document.getElementById('yieldCompliant').textContent = '--';
   document.getElementById('yieldFlagged').textContent = '--';
@@ -2189,6 +2681,75 @@ function drawStreets() {
     const [ra2x, ra2y] = worldToScreen(st.rowRight[1].x, st.rowRight[1].y);
     ctx.beginPath(); ctx.moveTo(ra1x, ra1y); ctx.lineTo(ra2x, ra2y); ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  // Draw curved street spines (Bezier curves)
+  if (state.curvedStreets) {
+    for (const cs of state.curvedStreets) {
+      if (cs.isSpine && cs.p0) {
+        // Draw Bezier curve as smooth spine centerline
+        const [sx0, sy0] = worldToScreen(cs.p0.x, cs.p0.y);
+        const [sx1, sy1] = worldToScreen(cs.p1.x, cs.p1.y);
+        const [sx2, sy2] = worldToScreen(cs.p2.x, cs.p2.y);
+        const [sx3, sy3] = worldToScreen(cs.p3.x, cs.p3.y);
+        ctx.strokeStyle = 'rgba(255, 217, 61, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(sx0, sy0);
+        ctx.bezierCurveTo(sx1, sy1, sx2, sy2, sx3, sy3);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (cs.isLoop && cs.points) {
+        // Draw loop road as polyline
+        ctx.strokeStyle = 'rgba(255, 217, 61, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        const [fx, fy] = worldToScreen(cs.points[0].x, cs.points[0].y);
+        ctx.moveTo(fx, fy);
+        for (let i = 1; i < cs.points.length; i++) {
+          const [px, py] = worldToScreen(cs.points[i].x, cs.points[i].y);
+          ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  // Draw cul-de-sac circles
+  if (state.culdesacs) {
+    for (const cds of state.culdesacs) {
+      const [scx, scy] = worldToScreen(cds.center.x, cds.center.y);
+      const rowR = (cds.rowRadius / state.scale) * state.zoom;
+      const pavedR = (cds.pavedRadius / state.scale) * state.zoom;
+
+      // ROW circle — white dashed
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 3]);
+      ctx.beginPath();
+      ctx.arc(scx, scy, rowR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Paved circle — yellow fill
+      ctx.fillStyle = 'rgba(255, 217, 61, 0.1)';
+      ctx.strokeStyle = 'rgba(255, 217, 61, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(scx, scy, pavedR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Center dot
+      ctx.fillStyle = 'rgba(255, 217, 61, 0.7)';
+      ctx.beginPath();
+      ctx.arc(scx, scy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 
