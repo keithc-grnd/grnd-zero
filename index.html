@@ -3088,6 +3088,7 @@ function clipLineToPolygon(lp1, lp2, poly) {
       intersections.push({ pt, t });
     }
   }
+  if (intersections.length === 0) return [];
   intersections.sort((a, b) => a.t - b.t);
   // Remove near-duplicates
   const unique = [intersections[0]];
@@ -5477,8 +5478,6 @@ function splitByAcreage() {
   }
   const dir = document.getElementById('paSplitDir').value;
   const targetAcres = parseFloat(document.getElementById('paSplitAcres').value) || 10;
-  const targetDensity = parseFloat(document.getElementById('paSplitDensity').value) || 6;
-  const pattern = document.getElementById('paSplitPattern').value;
   const targetSqFt = targetAcres * 43560;
   const totalSqFt = calcArea(state.vertices);
 
