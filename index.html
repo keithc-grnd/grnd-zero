@@ -5924,7 +5924,7 @@ function splitByAcreage() {
   showToast('Site split: ' + dirLabel + 'erly ' + targetAcres + ' ac + ' + oppLabel + ' balance — click Generate Layout', 'success');
 
   // Auto-generate layout within the new PAs
-  generateLayout();
+  generateFromSpine();
   } catch(err) {
     showToast('Split error: ' + err.message, 'error');
   }
