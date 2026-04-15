@@ -5622,21 +5622,29 @@ function generateFromSpine() {
           { x: w0x + depthDx * (halfROW + actualDepth), y: w0y + depthDy * (halfROW + actualDepth) }
         ];
 
+        // Check if lot centroid is inside boundary — skip if outside
+        const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
+        const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
+        if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
+
+        // Try clipping to boundary, fall back to raw rectangle
+        let finalPoly = lotPoly;
         const clipped = clipPolygonSH(lotPoly, buffer);
-        if (clipped.length < 3) continue;
-        const area = polygonArea(clipped);
+        if (clipped.length >= 3) {
+          finalPoly = clipped;
+        }
+
+        const area = polygonArea(finalPoly);
         if (area < 500) continue;
 
         // Per-PA criteria
-        const lotCx = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
-        const lotCy = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
         const criteria = getLotCriteriaAt(lotCx, lotCy, params);
         const reqArea = criteria.minLotArea || params.minLotArea;
         const reqWidth = criteria.minLotWidth || lotWidth;
         const compliant = area >= reqArea && actualWidth >= reqWidth;
 
         state.lots.push({
-          polygon: clipped, area, number: lotNum++,
+          polygon: finalPoly, area, number: lotNum++,
           compliant, width: actualWidth, depth: actualDepth,
           minAreaRequired: reqArea, minWidthRequired: reqWidth
         });
