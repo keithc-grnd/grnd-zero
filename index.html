@@ -5505,7 +5505,7 @@ function getLotCriteriaAt(wx, wy, defaultParams) {
 }
 
 // ============================================
-// PARALLEL STREET LAYOUT ENGINE
+// PERIMETER-FIRST SUBDIVISION LAYOUT ENGINE
 // ============================================
 function generateFromSpine() {
   if (!state.isClosed || state.vertices.length < 3) {
@@ -5517,9 +5517,10 @@ function generateFromSpine() {
   const halfROW = params.rowWidth / 2;
   const lotDepth = params.minLotDepth;
   const lotWidth = params.minLotWidth;
+  const setback = params.perimeterSetback;
 
-  // Buffer boundary
-  const buffer = offsetPolygon(state.vertices, params.perimeterSetback);
+  // Buffer boundary by setback
+  const buffer = offsetPolygon(state.vertices, setback);
   if (buffer.length < 3) { showToast('Buffer error', 'error'); return; }
   state.bufferedBoundary = buffer;
 
@@ -5529,40 +5530,139 @@ function generateFromSpine() {
   state.lots = [];
   state.knuckles = [];
 
-  // Determine street orientation from bias or boundary shape
-  const angleDeg = params.streetOrientation;
-  const angleRad = (angleDeg * Math.PI) / 180;
-  // Street direction (streets run along this vector)
-  const streetDirX = Math.cos(angleRad);  // E-W when angle=0
-  const streetDirY = Math.sin(angleRad);
-  // Perpendicular (blocks stack along this vector)
-  const blockDirX = -streetDirY;  // N-S when angle=0
-  const blockDirY = streetDirX;
-
-  // Bounding box of buffer in block direction
+  // Bounding box of the buffered boundary
   const xs = buffer.map(v => v.x);
   const ys = buffer.map(v => v.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-  const diag = Math.sqrt((maxX-minX)**2 + (maxY-minY)**2);
+  const bMinX = Math.min(...xs), bMaxX = Math.max(...xs);
+  const bMinY = Math.min(...ys), bMaxY = Math.max(...ys);
+  const bCx = (bMinX + bMaxX) / 2, bCy = (bMinY + bMaxY) / 2;
+  const bW = bMaxX - bMinX, bH = bMaxY - bMinY;
 
-  // Block spacing: two rows of lots + one street
+  // Orientation
+  const angleDeg = params.streetOrientation;
+  const angleRad = (angleDeg * Math.PI) / 180;
+  const streetDirX = Math.cos(angleRad), streetDirY = Math.sin(angleRad);
+  const blockDirX = -streetDirY, blockDirY = streetDirX;
+
+  // STEP 1: Perimeter streets — offset buffer inward by lotDepth + halfROW
+  // This creates the "perimeter road" that the perimeter lots front on
+  const perimStreetOffset = lotDepth + halfROW;
+  const perimRoad = offsetPolygon(buffer, perimStreetOffset);
+
+  // Add perimeter road segments as streets
+  if (perimRoad.length >= 3) {
+    for (let i = 0; i < perimRoad.length; i++) {
+      const j = (i + 1) % perimRoad.length;
+      const a = perimRoad[i], b = perimRoad[j];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (segLen < lotWidth) continue;
+
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const nx = -dy/len, ny = dx/len;
+
+      state.streets.push({
+        centerline: [a, b],
+        rowLeft: [
+          { x: a.x + nx*halfROW, y: a.y + ny*halfROW },
+          { x: b.x + nx*halfROW, y: b.y + ny*halfROW }
+        ],
+        rowRight: [
+          { x: a.x - nx*halfROW, y: a.y - ny*halfROW },
+          { x: b.x - nx*halfROW, y: b.y - ny*halfROW }
+        ],
+        isPrimary: true,
+        _name: 'Perimeter Rd',
+        isPerimeter: true
+      });
+    }
+  }
+
+  // STEP 2: Perimeter lots — between buffer edge and perimeter road ROW
+  // Lots back up to the boundary buffer, front on the perimeter road
+  let lotNum = 1;
+
+  for (let i = 0; i < buffer.length; i++) {
+    const j = (i + 1) % buffer.length;
+    const a = buffer[i], b = buffer[j];
+    const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+    if (edgeLen < lotWidth) continue;
+
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ux = dx/len, uy = dy/len;
+    // Inward normal
+    let nx = -uy, ny = ux;
+    const toCenter = nx*(bCx - a.x) + ny*(bCy - a.y);
+    if (toCenter < 0) { nx = -nx; ny = -ny; }
+
+    // Number of lots along this edge
+    const numLots = Math.max(1, Math.floor(edgeLen / lotWidth));
+    const actualWidth = edgeLen / numLots;
+
+    for (let li = 0; li < numLots; li++) {
+      const t0 = li / numLots, t1 = (li + 1) / numLots;
+      const p0 = { x: a.x + dx*t0, y: a.y + dy*t0 };
+      const p1 = { x: a.x + dx*t1, y: a.y + dy*t1 };
+
+      const lotPoly = [
+        p0,
+        p1,
+        { x: p1.x + nx*lotDepth, y: p1.y + ny*lotDepth },
+        { x: p0.x + nx*lotDepth, y: p0.y + ny*lotDepth }
+      ];
+
+      // Check centroid is inside boundary
+      const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
+      const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
+      if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
+
+      const area = polygonArea(lotPoly);
+      if (area < 500) continue;
+
+      const criteria = getLotCriteriaAt(lotCx, lotCy, params);
+      const reqArea = criteria.minLotArea || params.minLotArea;
+      const reqWidth = criteria.minLotWidth || lotWidth;
+      const compliant = area >= reqArea && actualWidth >= reqWidth;
+
+      state.lots.push({
+        polygon: lotPoly, area, number: lotNum++,
+        compliant, width: actualWidth, depth: lotDepth,
+        minAreaRequired: reqArea, minWidthRequired: reqWidth,
+        isPerimeter: true
+      });
+    }
+  }
+
+  // STEP 3: Interior streets — parallel streets inside the perimeter road
+  const diag = Math.sqrt(bW*bW + bH*bH);
   const blockSpacing = 2 * lotDepth + params.rowWidth;
 
-  // Generate parallel streets across the full width, stacked along block direction
-  const streetData = [];
+  // Interior area = inside the perimeter road
+  const interiorBound = offsetPolygon(buffer, perimStreetOffset + halfROW);
+  if (interiorBound.length < 3) {
+    // Parcel too small for interior streets — just perimeter lots
+    state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
+    updateYieldSummary(params);
+    render();
+    showToast(state.lots.length + ' perimeter lots generated', 'success');
+    return;
+  }
 
+  const intXs = interiorBound.map(v => v.x);
+  const intYs = interiorBound.map(v => v.y);
+  const intMinX = Math.min(...intXs), intMaxX = Math.max(...intXs);
+  const intMinY = Math.min(...intYs), intMaxY = Math.max(...intYs);
+  const intCx = (intMinX + intMaxX) / 2, intCy = (intMinY + intMaxY) / 2;
+
+  const interiorStreets = [];
   for (let d = -diag; d <= diag; d += blockSpacing) {
-    // Street centerline at offset d along blockDir from center
-    const ox = cx + blockDirX * d;
-    const oy = cy + blockDirY * d;
-
-    // Street runs along streetDir, extend far both ways then clip
+    const ox = intCx + blockDirX * d;
+    const oy = intCy + blockDirY * d;
     const p1 = { x: ox - streetDirX * diag, y: oy - streetDirY * diag };
     const p2 = { x: ox + streetDirX * diag, y: oy + streetDirY * diag };
 
-    const segs = clipLineToPolygon(p1, p2, buffer);
+    const segs = clipLineToPolygon(p1, p2, interiorBound);
     for (const seg of segs) {
       const segLen = Math.hypot(seg[1].x - seg[0].x, seg[1].y - seg[0].y);
       if (segLen < lotWidth * 2) continue;
@@ -5570,93 +5670,69 @@ function generateFromSpine() {
       const st = {
         centerline: [seg[0], seg[1]],
         rowLeft: [
-          { x: seg[0].x + blockDirX * halfROW, y: seg[0].y + blockDirY * halfROW },
-          { x: seg[1].x + blockDirX * halfROW, y: seg[1].y + blockDirY * halfROW }
+          { x: seg[0].x + blockDirX*halfROW, y: seg[0].y + blockDirY*halfROW },
+          { x: seg[1].x + blockDirX*halfROW, y: seg[1].y + blockDirY*halfROW }
         ],
         rowRight: [
-          { x: seg[0].x - blockDirX * halfROW, y: seg[0].y - blockDirY * halfROW },
-          { x: seg[1].x - blockDirX * halfROW, y: seg[1].y - blockDirY * halfROW }
+          { x: seg[0].x - blockDirX*halfROW, y: seg[0].y - blockDirY*halfROW },
+          { x: seg[1].x - blockDirX*halfROW, y: seg[1].y - blockDirY*halfROW }
         ],
         isPrimary: true,
-        _name: ordinalStreet(streetData.length + 1)
+        _name: ordinalStreet(interiorStreets.length + 1)
       };
       state.streets.push(st);
-      streetData.push({ d, seg, st });
+      interiorStreets.push({ d, seg, st });
     }
   }
 
-  if (streetData.length < 2) {
-    showToast('Not enough streets fit — adjust lot depth or orientation', 'warning');
-    return;
-  }
+  // STEP 4: Interior lots — between consecutive interior streets
+  interiorStreets.sort((a, b) => a.d - b.d);
 
-  // Sort streets by offset along block direction
-  streetData.sort((a, b) => a.d - b.d);
-
-  // Generate lots between consecutive streets
-  let lotNum = 1;
-
-  for (let si = 0; si < streetData.length - 1; si++) {
-    const st1 = streetData[si];
-    const st2 = streetData[si + 1];
-
-    // Block center line is between the two streets
-    const blockCenterD = (st1.d + st2.d) / 2;
+  for (let si = 0; si < interiorStreets.length - 1; si++) {
+    const st1 = interiorStreets[si];
+    const st2 = interiorStreets[si + 1];
     const halfBlockDepth = (st2.d - st1.d - params.rowWidth) / 2;
     if (halfBlockDepth < 20) continue;
 
-    // Each street has lots extending toward the block center
     for (const stInfo of [st1, st2]) {
       const [segA, segB] = stInfo.seg;
       const segDx = segB.x - segA.x, segDy = segB.y - segA.y;
       const segLen = Math.sqrt(segDx*segDx + segDy*segDy) || 1;
-      const segUx = segDx/segLen, segUy = segDy/segLen;
 
-      // Direction from this street toward the block center
       const toCenter = stInfo === st1 ? 1 : -1;
       const depthDx = blockDirX * toCenter;
       const depthDy = blockDirY * toCenter;
 
-      // Number of lots along this street
       const numLots = Math.max(1, Math.floor(segLen / lotWidth));
       const actualWidth = segLen / numLots;
       const actualDepth = Math.min(halfBlockDepth, lotDepth);
 
       for (let li = 0; li < numLots; li++) {
         const t0 = li / numLots, t1 = (li + 1) / numLots;
-        const w0x = segA.x + segDx * t0, w0y = segA.y + segDy * t0;
-        const w1x = segA.x + segDx * t1, w1y = segA.y + segDy * t1;
+        const w0x = segA.x + segDx*t0, w0y = segA.y + segDy*t0;
+        const w1x = segA.x + segDx*t1, w1y = segA.y + segDy*t1;
 
         const lotPoly = [
-          { x: w0x + depthDx * halfROW, y: w0y + depthDy * halfROW },
-          { x: w1x + depthDx * halfROW, y: w1y + depthDy * halfROW },
-          { x: w1x + depthDx * (halfROW + actualDepth), y: w1y + depthDy * (halfROW + actualDepth) },
-          { x: w0x + depthDx * (halfROW + actualDepth), y: w0y + depthDy * (halfROW + actualDepth) }
+          { x: w0x + depthDx*halfROW, y: w0y + depthDy*halfROW },
+          { x: w1x + depthDx*halfROW, y: w1y + depthDy*halfROW },
+          { x: w1x + depthDx*(halfROW+actualDepth), y: w1y + depthDy*(halfROW+actualDepth) },
+          { x: w0x + depthDx*(halfROW+actualDepth), y: w0y + depthDy*(halfROW+actualDepth) }
         ];
 
-        // Check if lot centroid is inside boundary — skip if outside
-        const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
-        const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
-        if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
+        const lotCx = (lotPoly[0].x+lotPoly[1].x+lotPoly[2].x+lotPoly[3].x)/4;
+        const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
+        if (!pointInPolygon({ x: lotCx, y: lotCy }, interiorBound)) continue;
 
-        // Try clipping to boundary, fall back to raw rectangle
-        let finalPoly = lotPoly;
-        const clipped = clipPolygonSH(lotPoly, buffer);
-        if (clipped.length >= 3) {
-          finalPoly = clipped;
-        }
-
-        const area = polygonArea(finalPoly);
+        const area = polygonArea(lotPoly);
         if (area < 500) continue;
 
-        // Per-PA criteria
         const criteria = getLotCriteriaAt(lotCx, lotCy, params);
         const reqArea = criteria.minLotArea || params.minLotArea;
         const reqWidth = criteria.minLotWidth || lotWidth;
         const compliant = area >= reqArea && actualWidth >= reqWidth;
 
         state.lots.push({
-          polygon: finalPoly, area, number: lotNum++,
+          polygon: lotPoly, area, number: lotNum++,
           compliant, width: actualWidth, depth: actualDepth,
           minAreaRequired: reqArea, minWidthRequired: reqWidth
         });
@@ -5664,15 +5740,15 @@ function generateFromSpine() {
     }
   }
 
-  // Detect knuckles
   state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
   updateYieldSummary(params);
   render();
 
   const compliant = state.lots.filter(l => l.compliant).length;
   const flagged = state.lots.length - compliant;
-  showToast(state.lots.length + ' lots, ' + streetData.length + ' streets | ' + compliant + ' compliant, ' + flagged + ' flagged',
-    flagged > 0 ? 'warning' : 'success');
+  showToast(state.lots.length + ' lots (' + state.lots.filter(l=>l.isPerimeter).length + ' perimeter + ' +
+    (state.lots.length - state.lots.filter(l=>l.isPerimeter).length) + ' interior), ' +
+    state.streets.length + ' streets', flagged > 0 ? 'warning' : 'success');
 }
 
 function regenerateLots() {
