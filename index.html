@@ -1219,11 +1219,11 @@ input[type="range"]::-moz-range-thumb {
         <div class="form-row-inline">
           <div>
             <label>Target (du/ac)</label>
-            <input type="number" id="pa1Density" value="6" min="1" max="30" step="0.5" />
+            <input type="number" id="pa1Density" value="6" min="1" max="30" step="0.5" onchange="autoRegenerate()" />
           </div>
           <div>
             <label>Layout</label>
-            <select id="pa1Pattern">
+            <select id="pa1Pattern" onchange="autoRegenerate()">
               <option value="grid">Grid</option>
               <option value="curvilinear" selected>Curvilinear</option>
               <option value="cul-de-sac-loop">CDS Loop</option>
@@ -1233,16 +1233,16 @@ input[type="range"]::-moz-range-thumb {
         <div class="form-row-inline">
           <div>
             <label>Min Width (ft)</label>
-            <input type="number" id="pa1LotWidth" value="60" min="20" max="200" step="5" />
+            <input type="number" id="pa1LotWidth" value="60" min="20" max="200" step="5" onchange="autoRegenerate()" />
           </div>
           <div>
             <label>Min Depth (ft)</label>
-            <input type="number" id="pa1LotDepth" value="100" min="50" max="400" step="5" />
+            <input type="number" id="pa1LotDepth" value="100" min="50" max="400" step="5" onchange="autoRegenerate()" />
           </div>
         </div>
         <div class="form-row">
           <label>Min Lot Area (sf)</label>
-          <input type="number" id="pa1LotArea" value="7200" min="1000" max="200000" step="100" />
+          <input type="number" id="pa1LotArea" value="7200" min="1000" max="200000" step="100" onchange="autoRegenerate()" />
         </div>
 
         <hr class="param-divider" />
@@ -1250,11 +1250,11 @@ input[type="range"]::-moz-range-thumb {
         <div class="form-row-inline">
           <div>
             <label>Target (du/ac)</label>
-            <input type="number" id="pa2Density" value="4" min="1" max="30" step="0.5" />
+            <input type="number" id="pa2Density" value="4" min="1" max="30" step="0.5" onchange="autoRegenerate()" />
           </div>
           <div>
             <label>Layout</label>
-            <select id="pa2Pattern">
+            <select id="pa2Pattern" onchange="autoRegenerate()">
               <option value="grid">Grid</option>
               <option value="curvilinear" selected>Curvilinear</option>
               <option value="cul-de-sac-loop">CDS Loop</option>
@@ -1264,16 +1264,16 @@ input[type="range"]::-moz-range-thumb {
         <div class="form-row-inline">
           <div>
             <label>Min Width (ft)</label>
-            <input type="number" id="pa2LotWidth" value="70" min="20" max="200" step="5" />
+            <input type="number" id="pa2LotWidth" value="70" min="20" max="200" step="5" onchange="autoRegenerate()" />
           </div>
           <div>
             <label>Min Depth (ft)</label>
-            <input type="number" id="pa2LotDepth" value="120" min="50" max="400" step="5" />
+            <input type="number" id="pa2LotDepth" value="120" min="50" max="400" step="5" onchange="autoRegenerate()" />
           </div>
         </div>
         <div class="form-row">
           <label>Min Lot Area (sf)</label>
-          <input type="number" id="pa2LotArea" value="8400" min="1000" max="200000" step="100" />
+          <input type="number" id="pa2LotArea" value="8400" min="1000" max="200000" step="100" onchange="autoRegenerate()" />
         </div>
 
         <button class="btn btn-primary" onclick="splitByAcreage()" style="margin-top:8px;">Create Split</button>
@@ -1349,7 +1349,7 @@ input[type="range"]::-moz-range-thumb {
         <div class="form-row-inline">
           <div>
             <label>ROW Width (ft)</label>
-            <input type="number" id="rowWidth" value="37" min="20" max="120" step="0.5" onchange="onDesignParamChange()" />
+            <input type="number" id="rowWidth" value="37" min="20" max="120" step="0.5" onchange="onDesignParamChange(); autoRegenerate();" />
           </div>
           <div>
             <label>Roadway Width (ft)</label>
@@ -1360,7 +1360,8 @@ input[type="range"]::-moz-range-thumb {
           <label>Street Orientation Bias</label>
           <div class="range-row">
             <input type="range" id="streetOrientation" min="0" max="180" step="1" value="0"
-                   oninput="document.getElementById('orientVal').textContent=this.value+'°'; onDesignParamChange();" />
+                   oninput="document.getElementById('orientVal').textContent=this.value+'°'; onDesignParamChange();"
+                   onchange="autoRegenerate();" />
             <span class="range-value" id="orientVal">0°</span>
           </div>
           <div style="display:flex; justify-content:space-between; font-size:9px; color:var(--text-secondary); margin-top:2px;">
@@ -1368,32 +1369,12 @@ input[type="range"]::-moz-range-thumb {
           </div>
         </div>
 
-        <hr class="param-divider" />
-
-        <!-- Lot Dimensions (defaults when no PA defined) -->
-        <div class="param-group-label">Default Lot Dimensions</div>
-        <p style="font-size:9px; color:var(--text-secondary); margin-bottom:6px;">
-          Used when no Planning Areas are defined. Otherwise PA criteria apply.
-        </p>
-        <div class="form-row-inline">
-          <div>
-            <label>Min Width (ft)</label>
-            <input type="number" id="minLotWidth" value="60" min="20" max="200" step="5" onchange="onDesignParamChange()" />
-          </div>
-          <div>
-            <label>Min Depth (ft)</label>
-            <input type="number" id="minLotDepth" value="100" min="50" max="400" step="5" onchange="onDesignParamChange()" />
-          </div>
-        </div>
-        <div class="form-row-inline">
-          <div>
-            <label>Min Area (sf)</label>
-            <input type="number" id="minLotArea" value="7200" min="1000" max="200000" step="100" onchange="onDesignParamChange()" />
-          </div>
-          <div>
-            <label>Corner Bonus (ft)</label>
-            <input type="number" id="cornerLotBonus" value="10" min="0" max="30" step="1" onchange="onDesignParamChange()" />
-          </div>
+        <!-- Hidden lot defaults (used by JS when no PA defined) -->
+        <div style="display:none;">
+          <input type="number" id="minLotWidth" value="60" />
+          <input type="number" id="minLotDepth" value="100" />
+          <input type="number" id="minLotArea" value="7200" />
+          <input type="number" id="cornerLotBonus" value="10" />
         </div>
 
         <hr class="param-divider" />
@@ -1450,7 +1431,7 @@ input[type="range"]::-moz-range-thumb {
         <div class="param-group-label">Setbacks</div>
         <div class="form-row">
           <label>Perimeter Setback / Buffer (ft)</label>
-          <input type="number" id="perimeterSetback" value="20" min="0" max="100" step="5" onchange="onDesignParamChange()" />
+          <input type="number" id="perimeterSetback" value="20" min="0" max="100" step="5" onchange="onDesignParamChange(); autoRegenerate();" />
         </div>
 
         <hr class="param-divider" />
@@ -2965,6 +2946,44 @@ function computeDensity() {
 function onDesignParamChange() {
   computeDensity();
   render();
+}
+
+// Auto-regenerate subdivision when PA parameters change
+function autoRegenerate() {
+  // Sync PA1 values to hidden default lot inputs
+  const pa1W = document.getElementById('pa1LotWidth');
+  const pa1D = document.getElementById('pa1LotDepth');
+  const pa1A = document.getElementById('pa1LotArea');
+  if (pa1W) document.getElementById('minLotWidth').value = pa1W.value;
+  if (pa1D) document.getElementById('minLotDepth').value = pa1D.value;
+  if (pa1A) document.getElementById('minLotArea').value = pa1A.value;
+
+  // Update PA criteria if PAs exist
+  for (let i = 0; i < state.planningAreas.length; i++) {
+    const pa = state.planningAreas[i];
+    const prefix = i === 0 ? 'pa1' : 'pa2';
+    const wEl = document.getElementById(prefix + 'LotWidth');
+    const dEl = document.getElementById(prefix + 'LotDepth');
+    const aEl = document.getElementById(prefix + 'LotArea');
+    const denEl = document.getElementById(prefix + 'Density');
+    const patEl = document.getElementById(prefix + 'Pattern');
+    if (wEl && dEl && aEl) {
+      pa.lotCriteria = {
+        minLotWidth: parseFloat(wEl.value) || 60,
+        minLotDepth: parseFloat(dEl.value) || 100,
+        minLotArea: parseFloat(aEl.value) || 7200,
+        targetDensity: parseFloat((denEl||{}).value) || 6,
+        layoutPattern: (patEl||{}).value || 'grid'
+      };
+      pa.targetDensity = pa.lotCriteria.targetDensity;
+      pa.layoutPattern = pa.lotCriteria.layoutPattern;
+    }
+  }
+
+  // Regenerate if we have a boundary and streets
+  if (state.isClosed && state.vertices.length >= 3) {
+    generateFromSpine();
+  }
 }
 
 // ============================================
