@@ -1223,11 +1223,10 @@ input[type="range"]::-moz-range-thumb {
           </div>
           <div>
             <label>Layout</label>
-            <select id="pa1Pattern" onchange="autoRegenerate()">
-              <option value="grid">Grid</option>
-              <option value="curvilinear" selected>Curvilinear</option>
-              <option value="cul-de-sac-loop">CDS Loop</option>
+            <select id="pa1Pattern" onchange="autoRegenerate()" style="display:none;">
+              <option value="grid" selected>Grid</option>
             </select>
+            <span style="font-size:10px; color:var(--text-secondary);">Grid (drag streets to curve)</span>
           </div>
         </div>
         <div class="form-row-inline">
@@ -1254,11 +1253,10 @@ input[type="range"]::-moz-range-thumb {
           </div>
           <div>
             <label>Layout</label>
-            <select id="pa2Pattern" onchange="autoRegenerate()">
-              <option value="grid">Grid</option>
-              <option value="curvilinear" selected>Curvilinear</option>
-              <option value="cul-de-sac-loop">CDS Loop</option>
+            <select id="pa2Pattern" onchange="autoRegenerate()" style="display:none;">
+              <option value="grid" selected>Grid</option>
             </select>
+            <span style="font-size:10px; color:var(--text-secondary);">Grid (drag streets to curve)</span>
           </div>
         </div>
         <div class="form-row-inline">
@@ -1337,15 +1335,7 @@ input[type="range"]::-moz-range-thumb {
 
         <!-- Street Layout -->
         <div class="param-group-label">Street Layout</div>
-        <div class="form-row">
-          <label>Layout Pattern</label>
-          <select id="layoutPattern" onchange="onDesignParamChange()">
-            <option value="grid">Grid</option>
-            <option value="curvilinear">Curvilinear</option>
-            <option value="cul-de-sac-loop">Cul-de-sac Loop</option>
-            <option value="spine-branches">Spine Road + Branches</option>
-          </select>
-        </div>
+        <select id="layoutPattern" style="display:none;"><option value="grid" selected>Grid</option></select>
         <div class="form-row-inline">
           <div>
             <label>ROW Width (ft)</label>
@@ -1472,7 +1462,10 @@ input[type="range"]::-moz-range-thumb {
           </label>
         </div>
         <p style="font-size:9px; color:var(--text-secondary); line-height:1.4;">
-          With Edit Mode on: click streets to select, drag to move. Lots regenerate automatically.
+          <strong style="color:var(--text-label);">Click</strong> a street to select (cyan).<br>
+          <strong style="color:var(--text-label);">Drag</strong> to move the street.<br>
+          <strong style="color:var(--text-label);">Ctrl+Drag</strong> to bend into a curve.<br>
+          Lots regenerate automatically.
         </p>
 
         <hr class="param-divider" />
