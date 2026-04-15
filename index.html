@@ -5501,215 +5501,186 @@ function generateFromSpine() {
     return;
   }
 
-  // Find the spine road — the first manually placed street, or the longest street
+  // Find the spine road
   let spine = null;
   for (const st of state.streets) {
     if (st.isManual && !st.isEntry) { spine = st; break; }
   }
-  if (!spine && state.manualStreets.length > 0) {
-    spine = state.manualStreets[0];
-  }
+  if (!spine && state.manualStreets.length > 0) spine = state.manualStreets[0];
   if (!spine) {
-    showToast('Place a spine road first (click Place Street, then click two points N-S through the site)', 'warning');
+    showToast('Place a spine road first (Place Street → click two points)', 'warning');
     return;
   }
 
   const params = getDesignParams();
   const halfROW = params.rowWidth / 2;
 
-  // Get PA-specific criteria or defaults
-  function getCriteria(wx, wy) {
-    return getLotCriteriaAt(wx, wy, params);
-  }
-
-  // Spine direction
+  // Spine geometry
   const [spA, spB] = spine.centerline;
   const spDx = spB.x - spA.x, spDy = spB.y - spA.y;
   const spLen = Math.sqrt(spDx*spDx + spDy*spDy) || 1;
-  const spUx = spDx/spLen, spUy = spDy/spLen; // spine unit vector
-  const spNx = -spUy, spNy = spUx;              // perpendicular (cross-street direction)
+  const spUx = spDx/spLen, spUy = spDy/spLen;
+  const spNx = -spUy, spNy = spUx;
 
-  // Buffer the boundary
+  // Buffer boundary
   const buffer = offsetPolygon(state.vertices, params.perimeterSetback);
-  if (buffer.length < 3) { showToast('Buffer too large', 'error'); return; }
+  if (buffer.length < 3) { showToast('Buffer error', 'error'); return; }
   state.bufferedBoundary = buffer;
 
-  // Clear auto-generated streets and lots, keep manual ones
+  // Keep manual streets/entries, clear auto-generated
   const manualStreets = state.streets.filter(s => s.isManual);
   state.streets = manualStreets.slice();
   state.lots = [];
   state.knuckles = [];
 
-  // Block dimensions
-  const blockDepth = params.minLotDepth * 2 + params.rowWidth;
-  // Cross streets every blockDepth along the spine
-  const crossStreets = [];
-  let lotNum = 1;
+  // ---- STEP 1: Place cross streets along entire spine ----
+  // Block = 2 rows of lots + 1 cross street
+  // blockSpacing = 2*lotDepth + ROW (from one cross street CL to the next)
+  const lotDepth = params.minLotDepth;
+  const lotWidth = params.minLotWidth;
+  const blockSpacing = 2 * lotDepth + params.rowWidth;
 
-  // Walk along spine and place cross streets
-  for (let d = blockDepth / 2; d < spLen; d += blockDepth) {
-    // Point on spine at distance d
+  // Place cross streets at regular intervals along the spine
+  // Start at half a lot depth from the beginning, end near the end
+  const crossStreetData = [];
+  const startD = lotDepth + halfROW; // first cross street offset from spine start
+  for (let d = startD; d < spLen - lotDepth; d += blockSpacing) {
     const cx = spA.x + spUx * d;
     const cy = spA.y + spUy * d;
 
-    // Cross street extends perpendicular to spine, both sides
-    // Clip to boundary buffer
-    const extendDist = 1000; // extend far, then clip
-    const csP1 = { x: cx + spNx * extendDist, y: cy + spNy * extendDist };
-    const csP2 = { x: cx - spNx * extendDist, y: cy - spNy * extendDist };
-
+    // Extend cross street both directions perpendicular to spine, clip to buffer
+    const farDist = 1500;
+    const csP1 = { x: cx - spNx * farDist, y: cy - spNy * farDist };
+    const csP2 = { x: cx + spNx * farDist, y: cy + spNy * farDist };
     const segs = clipLineToPolygon(csP1, csP2, buffer);
+
     for (const seg of segs) {
-      const csDx = seg[1].x - seg[0].x, csDy = seg[1].y - seg[0].y;
-      const csLen = Math.sqrt(csDx*csDx + csDy*csDy);
-      if (csLen < params.minLotWidth * 2) continue; // too short
+      const segLen = Math.hypot(seg[1].x - seg[0].x, seg[1].y - seg[0].y);
+      if (segLen < lotWidth) continue;
 
-      const csUx = csDx/csLen, csUy = csDy/csLen;
-      const csNx = -csUy, csNy = csUx;
-
-      const crossSt = {
+      const csSt = {
         centerline: [seg[0], seg[1]],
         rowLeft: [
-          { x: seg[0].x + csNx*halfROW, y: seg[0].y + csNy*halfROW },
-          { x: seg[1].x + csNx*halfROW, y: seg[1].y + csNy*halfROW }
+          { x: seg[0].x + spUx*halfROW, y: seg[0].y + spUy*halfROW },
+          { x: seg[1].x + spUx*halfROW, y: seg[1].y + spUy*halfROW }
         ],
         rowRight: [
-          { x: seg[0].x - csNx*halfROW, y: seg[0].y - csNy*halfROW },
-          { x: seg[1].x - csNx*halfROW, y: seg[1].y - csNy*halfROW }
+          { x: seg[0].x - spUx*halfROW, y: seg[0].y - spUy*halfROW },
+          { x: seg[1].x - spUx*halfROW, y: seg[1].y - spUy*halfROW }
         ],
         isPrimary: false,
-        _name: ordinalStreet(crossStreets.length + 1)
+        _name: ordinalStreet(crossStreetData.length + 1)
       };
-      state.streets.push(crossSt);
-      crossStreets.push({ st: crossSt, spineD: d });
+      state.streets.push(csSt);
+      crossStreetData.push({ d, cx, cy, seg, st: csSt });
     }
   }
 
-  // Now generate lots in each block
-  // Blocks are between consecutive cross streets, on both sides of spine
-  // Sort cross streets by distance along spine
-  crossStreets.sort((a, b) => a.spineD - b.spineD);
-
-  for (let ci = 0; ci < crossStreets.length - 1; ci++) {
-    const cs1 = crossStreets[ci];
-    const cs2 = crossStreets[ci + 1];
-    const blockStartD = cs1.spineD + halfROW;
-    const blockEndD = cs2.spineD - halfROW;
-    const blockLen = blockEndD - blockStartD;
-    if (blockLen < params.minLotWidth) continue;
-
-    // Number of lots that fit along the block (parallel to spine)
-    const criteria = getCriteria(
-      spA.x + spUx * (cs1.spineD + cs2.spineD) / 2,
-      spA.y + spUy * (cs1.spineD + cs2.spineD) / 2
-    );
-    const lotWidth = criteria.minLotWidth || params.minLotWidth;
-    const lotDepth = criteria.minLotDepth || params.minLotDepth;
-    const minArea = criteria.minLotArea || params.minLotArea;
-    const numLots = Math.max(1, Math.floor(blockLen / lotWidth));
-    const actualWidth = blockLen / numLots;
-
-    // Lots on both sides of each cross street (perpendicular to spine)
-    for (const side of [1, -1]) {
-      for (let li = 0; li < numLots; li++) {
-        const lotStartD = blockStartD + li * actualWidth;
-        const lotEndD = blockStartD + (li + 1) * actualWidth;
-
-        // Lot corners: along spine (lotStartD to lotEndD) x perpendicular (ROW to lotDepth)
-        const p1s = lotStartD, p1e = lotEndD;
-        const lotInner = halfROW;        // starts at spine ROW edge
-        const lotOuter = halfROW + lotDepth; // extends outward
-
-        const lotPoly = [
-          { x: spA.x + spUx*p1s + spNx*lotInner*side, y: spA.y + spUy*p1s + spNy*lotInner*side },
-          { x: spA.x + spUx*p1e + spNx*lotInner*side, y: spA.y + spUy*p1e + spNy*lotInner*side },
-          { x: spA.x + spUx*p1e + spNx*lotOuter*side, y: spA.y + spUy*p1e + spNy*lotOuter*side },
-          { x: spA.x + spUx*p1s + spNx*lotOuter*side, y: spA.y + spUy*p1s + spNy*lotOuter*side }
-        ];
-
-        // Clip to boundary buffer
-        const clipped = clipPolygonSH(lotPoly, buffer);
-        if (clipped.length < 3) continue;
-        const area = polygonArea(clipped);
-        if (area < 100) continue;
-
-        const compliant = area >= minArea && actualWidth >= lotWidth;
-
-        state.lots.push({
-          polygon: clipped, area, number: lotNum++,
-          compliant, width: actualWidth, depth: lotDepth,
-          minAreaRequired: minArea, minWidthRequired: lotWidth
-        });
-      }
-    }
+  if (crossStreetData.length === 0) {
+    showToast('No cross streets fit — adjust lot depth or parcel size', 'warning');
+    return;
   }
 
-  // Also generate lots along cross streets (on both sides of each cross street)
-  for (const cs of crossStreets) {
-    const [csA, csB] = cs.st.centerline;
-    const csDx = csB.x - csA.x, csDy = csB.y - csA.y;
-    const csLen = Math.sqrt(csDx*csDx + csDy*csDy);
-    if (csLen < params.minLotWidth) continue;
+  // ---- STEP 2: Generate lots in blocks ----
+  // Each block is between two consecutive cross streets
+  // Lots FRONT on the cross streets (lot depth runs N-S toward the block center)
+  // Two rows of lots per block, back-to-back
+  // Lot width runs E-W (perpendicular to spine = along cross street)
 
-    const csUx = csDx/csLen, csUy = csDy/csLen;
-    const csNx = -csUy, csNy = csUx;
+  let lotNum = 1;
+  const minLotArea = params.minLotArea;
 
-    // Skip the portion that overlaps with the spine ROW
-    // Lots go from spine ROW edge outward to boundary
-    for (const spineSide of [1, -1]) {
-      // Start after spine ROW
-      const startOffset = halfROW; // from cross street start
+  // For each side of the spine (left and right)
+  for (const spineSide of [1, -1]) {
 
-      // How far from spine centerline does this cross street extend on this side?
-      // Find the distance from spine to the cross street endpoint on this side
-      const midX = (csA.x + csB.x) / 2, midY = (csA.y + csB.y) / 2;
-      const toEndX = (spineSide > 0 ? csB.x : csA.x) - midX;
-      const toEndY = (spineSide > 0 ? csB.y : csA.y) - midY;
-      const distToEnd = Math.sqrt(toEndX*toEndX + toEndY*toEndY);
+    // For each cross street, determine how far the lots extend on this side
+    for (let ci = 0; ci < crossStreetData.length; ci++) {
+      const cs = crossStreetData[ci];
 
-      // Lots from spine ROW edge to boundary, along cross street
-      const lotableLen = distToEnd - halfROW;
-      if (lotableLen < params.minLotDepth) continue;
+      // The cross street segment on this side of spine
+      // Find the portion of the cross street on this spineSide
+      const spineAtCS_x = cs.cx;
+      const spineAtCS_y = cs.cy;
 
-      const criteria = getCriteria(midX, midY);
-      const lotDepth = criteria.minLotDepth || params.minLotDepth;
-      const lotWidth = criteria.minLotWidth || params.minLotWidth;
-      const numLots = Math.max(1, Math.floor(lotableLen / lotDepth));
-      const actualDepth = lotableLen / numLots;
+      // Start from spine ROW edge, go outward on this side
+      const innerX = spineAtCS_x + spNx * halfROW * spineSide;
+      const innerY = spineAtCS_y + spNy * halfROW * spineSide;
 
-      for (const csSide of [1, -1]) {
+      // Find where the cross street hits the boundary on this side
+      const outerPt = spineSide > 0 ? cs.seg[1] : cs.seg[0];
+      const stripLen = Math.hypot(outerPt.x - innerX, outerPt.y - innerY);
+      if (stripLen < lotWidth) continue;
+
+      // Direction along cross street (outward from spine)
+      const csOutDx = (outerPt.x - innerX), csOutDy = (outerPt.y - innerY);
+      const csOutLen = Math.sqrt(csOutDx*csOutDx + csOutDy*csOutDy) || 1;
+      const csOutUx = csOutDx/csOutLen, csOutUy = csOutDy/csOutLen;
+
+      // Number of lots along the cross street on this side
+      const numLots = Math.max(1, Math.floor(stripLen / lotWidth));
+      const actualLotWidth = stripLen / numLots;
+
+      // Lots face BOTH north and south from each cross street
+      // North row: depth goes toward the NEXT cross street (or boundary)
+      // South row: depth goes toward the PREVIOUS cross street (or boundary)
+      for (const rowDir of [1, -1]) {
+        // rowDir = 1: lots extend in +spine direction (toward spB)
+        // rowDir = -1: lots extend in -spine direction (toward spA)
+
+        // How deep can this row go?
+        let maxDepth = lotDepth;
+        // Check distance to adjacent cross street
+        const adjCI = rowDir > 0 ? ci + 1 : ci - 1;
+        if (adjCI >= 0 && adjCI < crossStreetData.length) {
+          const adjD = crossStreetData[adjCI].d;
+          const gap = Math.abs(adjD - cs.d);
+          maxDepth = Math.min(lotDepth, (gap - params.rowWidth) / 2);
+        } else {
+          // Edge of parcel — use lotDepth but lots will get clipped
+          maxDepth = lotDepth;
+        }
+        if (maxDepth < 20) continue;
+
         for (let li = 0; li < numLots; li++) {
-          const d0 = halfROW + li * actualDepth;
-          const d1 = halfROW + (li + 1) * actualDepth;
-          const dirX = spineSide > 0 ? csUx : -csUx;
-          const dirY = spineSide > 0 ? csUy : -csUy;
-          const startX = (csA.x + csB.x) / 2;
-          const startY = (csA.y + csB.y) / 2;
+          const w0 = li * actualLotWidth;
+          const w1 = (li + 1) * actualLotWidth;
+
+          // Lot corners
+          // Along cross street: innerPt + csOutU * w0/w1
+          // Perpendicular (depth): cs.cy + spU * (halfROW to halfROW+maxDepth) * rowDir
+          const lot_w0_x = innerX + csOutUx * w0;
+          const lot_w0_y = innerY + csOutUy * w0;
+          const lot_w1_x = innerX + csOutUx * w1;
+          const lot_w1_y = innerY + csOutUy * w1;
+
+          const depthDx = spUx * rowDir;
+          const depthDy = spUy * rowDir;
 
           const lotPoly = [
-            { x: startX + dirX*d0 + csNx*halfROW*csSide, y: startY + dirY*d0 + csNy*halfROW*csSide },
-            { x: startX + dirX*d1 + csNx*halfROW*csSide, y: startY + dirY*d1 + csNy*halfROW*csSide },
-            { x: startX + dirX*d1 + csNx*(halfROW+lotWidth)*csSide, y: startY + dirY*d1 + csNy*(halfROW+lotWidth)*csSide },
-            { x: startX + dirX*d0 + csNx*(halfROW+lotWidth)*csSide, y: startY + dirY*d0 + csNy*(halfROW+lotWidth)*csSide }
+            { x: lot_w0_x + depthDx * halfROW, y: lot_w0_y + depthDy * halfROW },
+            { x: lot_w1_x + depthDx * halfROW, y: lot_w1_y + depthDy * halfROW },
+            { x: lot_w1_x + depthDx * (halfROW + maxDepth), y: lot_w1_y + depthDy * (halfROW + maxDepth) },
+            { x: lot_w0_x + depthDx * (halfROW + maxDepth), y: lot_w0_y + depthDy * (halfROW + maxDepth) }
           ];
 
+          // Clip to buffer
           const clipped = clipPolygonSH(lotPoly, buffer);
           if (clipped.length < 3) continue;
           const area = polygonArea(clipped);
-          if (area < 100) continue;
+          if (area < 500) continue; // skip tiny slivers
 
-          // Don't overlap with spine ROW
+          // Check PA criteria
           const lotCx = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
           const lotCy = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
-          const toSpineD = Math.abs((lotCx - spA.x)*spNx + (lotCy - spA.y)*spNy);
-          if (toSpineD < halfROW) continue;
+          const criteria = getLotCriteriaAt(lotCx, lotCy, params);
+          const reqArea = criteria.minLotArea || minLotArea;
+          const reqWidth = criteria.minLotWidth || lotWidth;
+          const compliant = area >= reqArea && actualLotWidth >= reqWidth;
 
-          const compliant = area >= (criteria.minLotArea || params.minLotArea);
           state.lots.push({
             polygon: clipped, area, number: lotNum++,
-            compliant, width: lotWidth, depth: actualDepth,
-            minAreaRequired: criteria.minLotArea || params.minLotArea,
-            minWidthRequired: lotWidth
+            compliant, width: actualLotWidth, depth: maxDepth,
+            minAreaRequired: reqArea, minWidthRequired: reqWidth
           });
         }
       }
@@ -5720,7 +5691,11 @@ function generateFromSpine() {
   state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
   updateYieldSummary(params);
   render();
-  showToast('Generated: ' + state.lots.length + ' lots, ' + crossStreets.length + ' cross streets from spine', 'success');
+
+  const msg = state.lots.length + ' lots, ' + crossStreetData.length + ' cross streets';
+  const compliant = state.lots.filter(l => l.compliant).length;
+  const flagged = state.lots.length - compliant;
+  showToast('Generated: ' + msg + ' | ' + compliant + ' compliant, ' + flagged + ' flagged', flagged > 0 ? 'warning' : 'success');
 }
 
 function regenerateLots() {
