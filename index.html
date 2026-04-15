@@ -5612,10 +5612,13 @@ function generateFromSpine() {
         { x: p0.x + nx*lotDepth, y: p0.y + ny*lotDepth }
       ];
 
-      // Check centroid is inside boundary
+      // ALL corners must be inside the original boundary
       const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
       const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
-      if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
+      if (!pointInPolygon({ x: lotCx, y: lotCy }, state.vertices)) continue;
+      // Inner corners (depth side) must also be inside
+      if (!pointInPolygon(lotPoly[2], state.vertices)) continue;
+      if (!pointInPolygon(lotPoly[3], state.vertices)) continue;
 
       const area = polygonArea(lotPoly);
       if (area < 500) continue;
@@ -5721,7 +5724,7 @@ function generateFromSpine() {
 
         const lotCx = (lotPoly[0].x+lotPoly[1].x+lotPoly[2].x+lotPoly[3].x)/4;
         const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
-        if (!pointInPolygon({ x: lotCx, y: lotCy }, interiorBound)) continue;
+        if (!pointInPolygon({ x: lotCx, y: lotCy }, state.vertices)) continue;
 
         const area = polygonArea(lotPoly);
         if (area < 500) continue;
