@@ -3396,7 +3396,8 @@ function generateLayout() {
   }
 
   // Detect knuckles at intersections < 120° (Riverside Co. Std 801)
-  state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
+  state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius).filter(k =>
+    pointInPolygon(k.center, state.vertices));
 
   updateYieldSummary(params);
   render();
@@ -5653,7 +5654,8 @@ function generateFromSpine() {
   const interiorBound = offsetPolygon(buffer, perimStreetOffset + halfROW);
   if (interiorBound.length < 3) {
     // Parcel too small for interior streets — just perimeter lots
-    state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
+    state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius).filter(k =>
+      pointInPolygon(k.center, state.vertices));
     updateYieldSummary(params);
     render();
     showToast(state.lots.length + ' perimeter lots generated', 'success');
@@ -5751,7 +5753,16 @@ function generateFromSpine() {
     }
   }
 
-  state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius);
+  // Strict: only keep streets with both endpoints inside the original boundary
+  state.streets = state.streets.filter(st => {
+    const [a, b] = st.centerline;
+    return pointInPolygon(a, state.vertices) && pointInPolygon(b, state.vertices);
+  });
+
+  // Only knuckles whose center is inside the boundary
+  state.knuckles = detectKnuckles(state.streets, params.cdsKnuckleRadius).filter(k =>
+    pointInPolygon(k.center, state.vertices));
+
   updateYieldSummary(params);
   render();
 
