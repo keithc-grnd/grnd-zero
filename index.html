@@ -4524,52 +4524,39 @@ function drawLots() {
     ctx.closePath();
 
     if (!lot.compliant) {
-      ctx.fillStyle = 'rgba(244, 67, 54, 0.15)';
+      ctx.fillStyle = 'rgba(244, 67, 54, 0.08)';
     } else {
-      ctx.fillStyle = 'rgba(69, 183, 209, 0.06)';
+      ctx.fillStyle = 'rgba(69, 183, 209, 0.04)';
     }
     ctx.fill();
 
-    // Lot border — RED LINES for non-compliant, gray for compliant
+    // Lot border — thin lines, red for non-compliant
     if (!lot.compliant) {
-      ctx.strokeStyle = 'rgba(244, 67, 54, 0.9)';
-      ctx.lineWidth = 2.5;
-    } else {
-      ctx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
+      ctx.strokeStyle = 'rgba(244, 67, 54, 0.85)';
       ctx.lineWidth = 1;
+    } else {
+      ctx.strokeStyle = 'rgba(180, 180, 180, 0.4)';
+      ctx.lineWidth = 0.5;
     }
     ctx.stroke();
 
-    // Label: lot number and area
+    // Label: lot number (smaller)
     if (showLabels) {
       let cxL = 0, cyL = 0;
       for (const p of poly) { cxL += p.x; cyL += p.y; }
       cxL /= poly.length; cyL /= poly.length;
       const [lx, ly] = worldToScreen(cxL, cyL);
 
-      // Only label if zoom makes it readable
-      if (state.zoom > 0.3) {
-        ctx.font = 'bold 11px Consolas, monospace';
+      if (state.zoom > 0.5) {
+        ctx.font = 'bold 8px Consolas, monospace';
         ctx.textAlign = 'center';
-        ctx.fillStyle = lot.compliant ? 'rgba(255,255,255,0.7)' : 'rgba(244,67,54,0.95)';
-        ctx.fillText(lot.number, lx, ly - 4);
+        ctx.fillStyle = lot.compliant ? 'rgba(255,255,255,0.75)' : 'rgba(244,67,54,0.95)';
+        ctx.fillText(lot.number, lx, ly);
 
-        if (state.zoom > 0.6) {
-          ctx.font = '9px Consolas, monospace';
-          ctx.fillStyle = lot.compliant ? 'rgba(150,150,150,0.7)' : 'rgba(244,67,54,0.8)';
+        if (state.zoom > 1.0) {
+          ctx.font = '7px Consolas, monospace';
+          ctx.fillStyle = lot.compliant ? 'rgba(150,150,150,0.6)' : 'rgba(244,67,54,0.7)';
           ctx.fillText(Math.round(lot.area).toLocaleString() + ' sf', lx, ly + 9);
-          // Show violation reason for non-compliant lots
-          if (!lot.compliant && state.zoom > 0.8) {
-            ctx.font = 'bold 8px Consolas, monospace';
-            ctx.fillStyle = 'rgba(244,67,54,0.9)';
-            const minA = lot.minAreaRequired || 7200;
-            if (lot.area < minA) {
-              ctx.fillText('< ' + minA.toLocaleString() + ' sf min', lx, ly + 20);
-            }
-            if (lot.width < (lot.minWidthRequired || 60)) {
-              ctx.fillText('< ' + (lot.minWidthRequired || 60) + "' width min", lx, ly + 30);
-            }
-          }
         }
       }
     }
@@ -5556,7 +5543,10 @@ function generateFromSpine() {
       const j = (i + 1) % perimRoad.length;
       const a = perimRoad[i], b = perimRoad[j];
       const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-      if (segLen < lotWidth) continue;
+      if (segLen < 20) continue;
+
+      // Both endpoints must be inside the original boundary
+      if (!pointInPolygon(a, state.vertices) || !pointInPolygon(b, state.vertices)) continue;
 
       const dx = b.x - a.x, dy = b.y - a.y;
       const len = Math.sqrt(dx*dx + dy*dy) || 1;
@@ -6135,14 +6125,14 @@ function drawPlanningAreas() {
       const [sx2, sy2] = worldToScreen(seg[1].x, seg[1].y);
       // Thick solid line
       ctx.strokeStyle = 'rgba(255, 100, 100, 0.9)';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(sx1, sy1);
       ctx.lineTo(sx2, sy2);
       ctx.stroke();
       // Label at midpoint
       const mx = (sx1+sx2)/2, my = (sy1+sy2)/2;
-      ctx.font = 'bold 10px Segoe UI, sans-serif';
+      ctx.font = 'bold 9px Segoe UI, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(255, 100, 100, 0.9)';
       ctx.fillText('PA BOUNDARY', mx, my - 8);
