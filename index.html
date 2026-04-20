@@ -5578,15 +5578,16 @@ function generateFromSpine() {
     }
   }
 
-  // STEP 2: Perimeter lots — between buffer edge and perimeter road ROW
-  // Lots back up to the boundary buffer, front on the perimeter road
+  // STEP 2: Perimeter lots — complete ring around boundary (doughnut)
+  // Lots back up to boundary buffer, front on perimeter road
+  // Try full lotDepth first, reduce if lot extends outside boundary
   let lotNum = 1;
 
   for (let i = 0; i < buffer.length; i++) {
     const j = (i + 1) % buffer.length;
     const a = buffer[i], b = buffer[j];
     const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
-    if (edgeLen < lotWidth) continue;
+    if (edgeLen < 10) continue; // skip tiny edges but allow short ones
 
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.sqrt(dx*dx + dy*dy) || 1;
@@ -5596,8 +5597,9 @@ function generateFromSpine() {
     const toCenter = nx*(bCx - a.x) + ny*(bCy - a.y);
     if (toCenter < 0) { nx = -nx; ny = -ny; }
 
-    // Number of lots along this edge
-    const numLots = Math.max(1, Math.floor(edgeLen / lotWidth));
+    // Number of lots along this edge — use smaller of lotWidth or edge length
+    const effLotWidth = Math.min(lotWidth, edgeLen);
+    const numLots = Math.max(1, Math.floor(edgeLen / effLotWidth));
     const actualWidth = edgeLen / numLots;
 
     for (let li = 0; li < numLots; li++) {
@@ -5605,35 +5607,41 @@ function generateFromSpine() {
       const p0 = { x: a.x + dx*t0, y: a.y + dy*t0 };
       const p1 = { x: a.x + dx*t1, y: a.y + dy*t1 };
 
-      const lotPoly = [
-        p0,
-        p1,
-        { x: p1.x + nx*lotDepth, y: p1.y + ny*lotDepth },
-        { x: p0.x + nx*lotDepth, y: p0.y + ny*lotDepth }
-      ];
+      // Try progressively shorter depths until the lot fits inside boundary
+      let placed = false;
+      for (let tryDepth = lotDepth; tryDepth >= 30; tryDepth -= 10) {
+        const lotPoly = [
+          { x: p0.x, y: p0.y },
+          { x: p1.x, y: p1.y },
+          { x: p1.x + nx*tryDepth, y: p1.y + ny*tryDepth },
+          { x: p0.x + nx*tryDepth, y: p0.y + ny*tryDepth }
+        ];
 
-      // ALL corners must be inside the original boundary
-      const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
-      const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
-      if (!pointInPolygon({ x: lotCx, y: lotCy }, state.vertices)) continue;
-      // Inner corners (depth side) must also be inside
-      if (!pointInPolygon(lotPoly[2], state.vertices)) continue;
-      if (!pointInPolygon(lotPoly[3], state.vertices)) continue;
+        const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
+        const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
 
-      const area = polygonArea(lotPoly);
-      if (area < 500) continue;
+        // Centroid and inner corners must be inside original boundary
+        if (!pointInPolygon({ x: lotCx, y: lotCy }, state.vertices)) continue;
+        if (!pointInPolygon(lotPoly[2], state.vertices)) continue;
+        if (!pointInPolygon(lotPoly[3], state.vertices)) continue;
 
-      const criteria = getLotCriteriaAt(lotCx, lotCy, params);
-      const reqArea = criteria.minLotArea || params.minLotArea;
-      const reqWidth = criteria.minLotWidth || lotWidth;
-      const compliant = area >= reqArea && actualWidth >= reqWidth;
+        const area = polygonArea(lotPoly);
+        if (area < 200) continue;
 
-      state.lots.push({
-        polygon: lotPoly, area, number: lotNum++,
-        compliant, width: actualWidth, depth: lotDepth,
-        minAreaRequired: reqArea, minWidthRequired: reqWidth,
-        isPerimeter: true
-      });
+        const criteria = getLotCriteriaAt(lotCx, lotCy, params);
+        const reqArea = criteria.minLotArea || params.minLotArea;
+        const reqWidth = criteria.minLotWidth || lotWidth;
+        const compliant = area >= reqArea && actualWidth >= reqWidth && tryDepth >= lotDepth;
+
+        state.lots.push({
+          polygon: lotPoly, area, number: lotNum++,
+          compliant, width: actualWidth, depth: tryDepth,
+          minAreaRequired: reqArea, minWidthRequired: reqWidth,
+          isPerimeter: true
+        });
+        placed = true;
+        break;
+      }
     }
   }
 
