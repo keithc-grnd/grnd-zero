@@ -5523,7 +5523,8 @@ function generateFromSpine() {
   const ys = buffer.map(v => v.y);
   const bMinX = Math.min(...xs), bMaxX = Math.max(...xs);
   const bMinY = Math.min(...ys), bMaxY = Math.max(...ys);
-  const bCx = (bMinX + bMaxX) / 2, bCy = (bMinY + bMaxY) / 2;
+  const bCx = state.vertices.reduce((s,v) => s+v.x, 0) / state.vertices.length;
+  const bCy = state.vertices.reduce((s,v) => s+v.y, 0) / state.vertices.length;
   const bW = bMaxX - bMinX, bH = bMaxY - bMinY;
 
   // Orientation
@@ -5583,10 +5584,13 @@ function generateFromSpine() {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.sqrt(dx*dx + dy*dy) || 1;
     const ux = dx/len, uy = dy/len;
-    // Inward normal
+    // Inward normal: direction from edge midpoint toward the polygon centroid
+    const edgeMx = (a.x + b.x) / 2, edgeMy = (a.y + b.y) / 2;
+    const toCx = bCx - edgeMx, toCy = bCy - edgeMy;
+    const toCLen = Math.sqrt(toCx*toCx + toCy*toCy) || 1;
+    // Project onto perpendicular of edge to get the inward perpendicular component
     let nx = -uy, ny = ux;
-    const toCenter = nx*(bCx - a.x) + ny*(bCy - a.y);
-    if (toCenter < 0) { nx = -nx; ny = -ny; }
+    if (nx*toCx + ny*toCy < 0) { nx = -nx; ny = -ny; }
 
     // Number of lots along this edge — use smaller of lotWidth or edge length
     const effLotWidth = Math.min(lotWidth, edgeLen);
