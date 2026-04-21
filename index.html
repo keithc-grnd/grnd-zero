@@ -4329,21 +4329,21 @@ function drawStreets() {
       ctx.fill();
       ctx.stroke();
 
-      // Draw throat if direction is available
+      // Draw throat — extends from bulb toward the connecting street
       if (cds.direction && cds.throatLength) {
-        const dir = cds.direction;
-        const nx = -dir.y, ny = dir.x; // perpendicular to throat
+        const dir = cds.direction; // points from CDS center TOWARD the street
+        const nx = -dir.y, ny = dir.x;
         const halfThroat = (cds.throatWidth || 37) / 2;
         const tLen = cds.throatLength;
 
-        // Throat ROW edges (extending from bulb downward along direction)
+        // Throat starts at bulb edge (toward street) and extends toward street
         const tStart = {
-          x: cds.center.x - dir.x * cds.rowRadius,
-          y: cds.center.y - dir.y * cds.rowRadius
+          x: cds.center.x + dir.x * cds.rowRadius,
+          y: cds.center.y + dir.y * cds.rowRadius
         };
         const tEnd = {
-          x: tStart.x - dir.x * tLen,
-          y: tStart.y - dir.y * tLen
+          x: tStart.x + dir.x * tLen,
+          y: tStart.y + dir.y * tLen
         };
 
         // Left and right ROW edges of throat
@@ -4410,10 +4410,10 @@ function drawStreets() {
         const halfThroat = (cds.throatWidth || 37) / 2;
         const pavedHalf = halfThroat - 0.5;
         const tLen = cds.throatLength || 86;
-        const tsX = cds.center.x - dir.x * cds.rowRadius;
-        const tsY = cds.center.y - dir.y * cds.rowRadius;
-        const teX = tsX - dir.x * tLen;
-        const teY = tsY - dir.y * tLen;
+        const tsX = cds.center.x + dir.x * cds.rowRadius;
+        const tsY = cds.center.y + dir.y * cds.rowRadius;
+        const teX = tsX + dir.x * tLen;
+        const teY = tsY + dir.y * tLen;
 
         // Curb lines (paved edge)
         for (const side of [1, -1]) {
@@ -5377,6 +5377,12 @@ function placeCdsAt(worldX, worldY) {
       snapPt = { x: a.x - streetUx * params.cdsRadius, y: a.y - streetUy * params.cdsRadius };
       bestDir = { x: streetUx, y: streetUy };
     }
+  }
+
+  // Pull CDS center inside boundary if needed
+  if (!pointInPolygon(snapPt, state.vertices)) {
+    // Fall back to click location if snap went outside
+    snapPt = { x: worldX, y: worldY };
   }
 
   state.culdesacs.push({
