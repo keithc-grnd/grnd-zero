@@ -5539,13 +5539,13 @@ function generateFromSpine() {
   // NO perimeter streets drawn — just lots, then interior streets fill the doughnut
 
   // STEP 2: Perimeter lots — complete ring around boundary (doughnut)
+  // Walk the ORIGINAL boundary (not buffer) for reliable edges
   // Lots: 60' (width) along boundary edge, 100' (depth) going inward
-  // Try full lotDepth first, reduce if lot extends outside boundary
   let lotNum = 1;
 
-  for (let i = 0; i < buffer.length; i++) {
-    const j = (i + 1) % buffer.length;
-    const a = buffer[i], b = buffer[j];
+  for (let i = 0; i < state.vertices.length; i++) {
+    const j = (i + 1) % state.vertices.length;
+    const a = state.vertices[i], b = state.vertices[j];
     const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
     if (edgeLen < 10) continue; // skip tiny edges but allow short ones
 
@@ -5574,11 +5574,12 @@ function generateFromSpine() {
 
       let placed = false;
       for (let tryDepth = perimInward; tryDepth >= 30; tryDepth -= 10) {
+        // Lot starts at setback from boundary, extends inward
         const lotPoly = [
-          { x: p0.x, y: p0.y },
-          { x: p1.x, y: p1.y },
-          { x: p1.x + nx*tryDepth, y: p1.y + ny*tryDepth },
-          { x: p0.x + nx*tryDepth, y: p0.y + ny*tryDepth }
+          { x: p0.x + nx*setback, y: p0.y + ny*setback },
+          { x: p1.x + nx*setback, y: p1.y + ny*setback },
+          { x: p1.x + nx*(setback + tryDepth), y: p1.y + ny*(setback + tryDepth) },
+          { x: p0.x + nx*(setback + tryDepth), y: p0.y + ny*(setback + tryDepth) }
         ];
 
         const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
