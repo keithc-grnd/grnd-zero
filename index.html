@@ -5533,45 +5533,13 @@ function generateFromSpine() {
   const streetDirX = Math.cos(angleRad), streetDirY = Math.sin(angleRad);
   const blockDirX = -streetDirY, blockDirY = streetDirX;
 
-  // STEP 1: Perimeter streets — offset buffer inward by lotDepth + halfROW
-  // This creates the "perimeter road" that the perimeter lots front on
-  const perimStreetOffset = lotWidth + halfROW; // street runs one lot-width inside boundary
+  // STEP 1: Compute perimeter road offset (used for interior area)
+  const perimStreetOffset = lotDepth + halfROW;
   const perimRoad = offsetPolygon(buffer, perimStreetOffset);
-
-  // Add perimeter road segments as streets
-  if (perimRoad.length >= 3) {
-    for (let i = 0; i < perimRoad.length; i++) {
-      const j = (i + 1) % perimRoad.length;
-      const a = perimRoad[i], b = perimRoad[j];
-      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-      if (segLen < 20) continue;
-
-      // Both endpoints must be inside the original boundary
-      if (!pointInPolygon(a, state.vertices) || !pointInPolygon(b, state.vertices)) continue;
-
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const len = Math.sqrt(dx*dx + dy*dy) || 1;
-      const nx = -dy/len, ny = dx/len;
-
-      state.streets.push({
-        centerline: [a, b],
-        rowLeft: [
-          { x: a.x + nx*halfROW, y: a.y + ny*halfROW },
-          { x: b.x + nx*halfROW, y: b.y + ny*halfROW }
-        ],
-        rowRight: [
-          { x: a.x - nx*halfROW, y: a.y - ny*halfROW },
-          { x: b.x - nx*halfROW, y: b.y - ny*halfROW }
-        ],
-        isPrimary: true,
-        _name: 'Perimeter Rd',
-        isPerimeter: true
-      });
-    }
-  }
+  // NO perimeter streets drawn — just lots, then interior streets fill the doughnut
 
   // STEP 2: Perimeter lots — complete ring around boundary (doughnut)
-  // Lots back up to boundary buffer, front on perimeter road
+  // Lots: 60' (width) along boundary edge, 100' (depth) going inward
   // Try full lotDepth first, reduce if lot extends outside boundary
   let lotNum = 1;
 
@@ -5592,9 +5560,9 @@ function generateFromSpine() {
     let nx = -uy, ny = ux;
     if (nx*toCx + ny*toCy < 0) { nx = -nx; ny = -ny; }
 
-    // Perimeter lots: long side (lotDepth) runs ALONG boundary, short side (lotWidth) goes INWARD
-    const perimAlongEdge = lotDepth;  // 100' along boundary
-    const perimInward = lotWidth;      // 60' toward interior
+    // Perimeter lots: short side (lotWidth=60') along boundary, long side (lotDepth=100') goes INWARD
+    const perimAlongEdge = lotWidth;   // 60' along boundary
+    const perimInward = lotDepth;       // 100' toward interior
 
     const numLots = Math.max(1, Math.floor(edgeLen / perimAlongEdge));
     const actualWidth = edgeLen / numLots;
