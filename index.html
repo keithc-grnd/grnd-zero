@@ -5586,8 +5586,8 @@ function generateFromSpine() {
         const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
         const lotCy = (lotPoly[0].y + lotPoly[1].y + lotPoly[2].y + lotPoly[3].y) / 4;
 
-        // ALL 4 corners must be inside original boundary
-        const allInside = lotPoly.every(p => pointInPolygon(p, state.vertices));
+        // Centroid must be inside boundary (relaxed check for perimeter lots)
+        const allInside = pointInPolygon({ x: lotCx, y: lotCy }, state.vertices);
         if (!allInside) continue;
 
         const area = polygonArea(lotPoly);
@@ -5610,7 +5610,39 @@ function generateFromSpine() {
     }
   }
 
-  // STEP 3: Interior streets — parallel streets inside the perimeter road
+  // STEP 3: Perimeter road (doughnut street) — runs inside the perimeter lots
+  const perimRoadOffset = lotDepth + halfROW; // lotDepth inside boundary
+  const perimRoadPoly = offsetPolygon(state.vertices, perimRoadOffset);
+  if (perimRoadPoly.length >= 3) {
+    for (let i = 0; i < perimRoadPoly.length; i++) {
+      const j = (i + 1) % perimRoadPoly.length;
+      const a = perimRoadPoly[i], b = perimRoadPoly[j];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (segLen < 20) continue;
+      if (!pointInPolygon(a, state.vertices) || !pointInPolygon(b, state.vertices)) continue;
+
+      const sdx = b.x - a.x, sdy = b.y - a.y;
+      const slen = Math.sqrt(sdx*sdx + sdy*sdy) || 1;
+      const snx = -sdy/slen, sny = sdx/slen;
+
+      state.streets.push({
+        centerline: [a, b],
+        rowLeft: [
+          { x: a.x + snx*halfROW, y: a.y + sny*halfROW },
+          { x: b.x + snx*halfROW, y: b.y + sny*halfROW }
+        ],
+        rowRight: [
+          { x: a.x - snx*halfROW, y: a.y - sny*halfROW },
+          { x: b.x - snx*halfROW, y: b.y - sny*halfROW }
+        ],
+        isPrimary: true,
+        _name: 'Perimeter Rd',
+        isPerimeter: true
+      });
+    }
+  }
+
+  // STEP 4: Interior streets — parallel streets inside the perimeter road
   const diag = Math.sqrt(bW*bW + bH*bH);
   const blockSpacing = 2 * lotDepth + params.rowWidth;
 
