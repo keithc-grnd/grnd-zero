@@ -5772,21 +5772,18 @@ function generateFromSpine() {
 }
 
 function regenerateLots() {
-  if (!state.isClosed || state.streets.length === 0) return;
+  if (!state.isClosed) return;
   const params = getDesignParams();
-  const buffer = state.bufferedBoundary.length > 2
-    ? state.bufferedBoundary
-    : offsetPolygon(state.vertices, params.perimeterSetback);
-  if (buffer.length < 3) return;
-  state.bufferedBoundary = buffer;
 
-  // Clear only auto-generated lots, keep manual adjustments
-  state.lots = [];
-  let lotNum = 1;
+  // Keep perimeter lots, only clear interior lots
+  const perimeterLots = state.lots.filter(l => l.isPerimeter);
+  state.lots = perimeterLots;
+  let lotNum = perimeterLots.length + 1;
 
-  // For each pair of parallel streets, create lots between their ROW edges
+  // For each non-perimeter street, create lots on both sides
   for (let i = 0; i < state.streets.length; i++) {
     const st = state.streets[i];
+    if (st.isPerimeter) continue; // skip perimeter streets — those lots already exist
     const [a, b] = st.centerline;
     const dx = b.x-a.x, dy = b.y-a.y;
     const len = Math.sqrt(dx*dx+dy*dy);
@@ -5812,17 +5809,20 @@ function regenerateLots() {
           { x: p0.x + nx*(halfROW + params.minLotDepth)*side, y: p0.y + ny*(halfROW + params.minLotDepth)*side }
         ];
 
-        const clipped = clipPolygonSH(lotPoly, buffer);
-        if (clipped.length < 3) continue;
-        const area = polygonArea(clipped);
-        if (area < 100) continue;
+        // Centroid must be inside boundary
+        const lotCx = (lotPoly[0].x+lotPoly[1].x+lotPoly[2].x+lotPoly[3].x)/4;
+        const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
+        if (!pointInPolygon({ x: lotCx, y: lotCy }, state.vertices)) continue;
+
+        const area = polygonArea(lotPoly);
+        if (area < 500) continue;
 
         // Check this lot doesn't overlap any other street ROW
         let overlapsStreet = false;
         for (let j = 0; j < state.streets.length; j++) {
           if (j === i) continue;
-          const midX = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
-          const midY = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
+          const midX = lotCx;
+          const midY = lotCy;
           const [sa, sb] = state.streets[j].centerline;
           const sdx = sb.x-sa.x, sdy = sb.y-sa.y;
           const slen = Math.sqrt(sdx*sdx+sdy*sdy) || 1;
@@ -5838,23 +5838,18 @@ function regenerateLots() {
         // Check not inside any cul-de-sac
         let overlapsCds = false;
         for (const cds of state.culdesacs) {
-          const midX = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
-          const midY = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
-          if (Math.hypot(midX - cds.center.x, midY - cds.center.y) < cds.rowRadius + 5) {
+          if (Math.hypot(lotCx - cds.center.x, lotCy - cds.center.y) < cds.rowRadius + 5) {
             overlapsCds = true;
             break;
           }
         }
         if (overlapsCds) continue;
 
-        // Check per-PA criteria for this lot's location
-        const lotCx = clipped.reduce((s,p) => s+p.x, 0) / clipped.length;
-        const lotCy = clipped.reduce((s,p) => s+p.y, 0) / clipped.length;
         const lotCrit = getLotCriteriaAt(lotCx, lotCy, params);
         const isCompliant = area >= lotCrit.minLotArea && actualWidth >= lotCrit.minLotWidth;
 
         state.lots.push({
-          polygon: clipped, area, number: lotNum++,
+          polygon: lotPoly, area, number: lotNum++,
           compliant: isCompliant,
           width: actualWidth, depth: params.minLotDepth,
           minAreaRequired: lotCrit.minLotArea,
