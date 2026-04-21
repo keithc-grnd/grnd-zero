@@ -3657,15 +3657,30 @@ function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumSt
       { x: center.x + Math.cos(a2) * rowRadius, y: center.y + Math.sin(a2) * rowRadius }
     ];
 
-    const clipped = clipPolygonSH(lotPoly, buffer);
-    if (clipped.length < 3) continue;
-    const area = polygonArea(clipped);
-    if (area < 10) continue;
+    // Centroid check — must be inside boundary
+    const lotCx = (lotPoly[0].x+lotPoly[1].x+lotPoly[2].x+lotPoly[3].x)/4;
+    const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
+    if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
+
+    // Skip lots that overlap with existing streets
+    let overlaps = false;
+    for (const st of state.streets) {
+      const [sa, sb] = st.centerline;
+      const sdx = sb.x-sa.x, sdy = sb.y-sa.y;
+      const slen = Math.sqrt(sdx*sdx+sdy*sdy) || 1;
+      const t = Math.max(0, Math.min(1, ((lotCx-sa.x)*sdx+(lotCy-sa.y)*sdy)/(slen*slen)));
+      const px = sa.x+t*sdx, py = sa.y+t*sdy;
+      if (Math.hypot(lotCx-px, lotCy-py) < params.rowWidth) { overlaps = true; break; }
+    }
+    if (overlaps) continue;
+
+    const area = polygonArea(lotPoly);
+    if (area < 500) continue;
 
     lots.push({
-      polygon: clipped,
+      polygon: lotPoly,
       area: area,
-      number: lotNumStart + i,
+      number: lotNumStart + lots.length,
       compliant: area >= params.minLotArea,
       width: rowRadius * angleStep,
       depth: lotDepth
@@ -5335,31 +5350,35 @@ function startPlaceCds() {
 function placeCdsAt(worldX, worldY) {
   const params = getDesignParams();
 
-  // Find nearest street endpoint to orient the cul-de-sac
-  let bestDist = Infinity, bestDir = { x: 0, y: -1 };
+  // Find nearest street endpoint — snap CDS to it and align with street direction
+  let bestDist = Infinity, bestDir = { x: -1, y: 0 }, snapPt = { x: worldX, y: worldY };
   for (const st of state.streets) {
+    if (st.isPerimeter) continue; // don't snap to perimeter road
     const [a, b] = st.centerline;
-    // Check distance to endpoint B (end of street)
+    const streetDx = b.x - a.x, streetDy = b.y - a.y;
+    const streetLen = Math.sqrt(streetDx*streetDx + streetDy*streetDy) || 1;
+    const streetUx = streetDx/streetLen, streetUy = streetDy/streetLen;
+
+    // Check endpoint B (far end of street)
     const dB = Math.hypot(worldX - b.x, worldY - b.y);
     if (dB < bestDist) {
       bestDist = dB;
-      // Direction from CDS center BACK toward the street (throat direction)
-      const tdx = b.x - worldX, tdy = b.y - worldY;
-      const tlen = Math.sqrt(tdx*tdx + tdy*tdy) || 1;
-      bestDir = { x: tdx/tlen, y: tdy/tlen };
+      // CDS center is offset from B along the street direction
+      snapPt = { x: b.x + streetUx * params.cdsRadius, y: b.y + streetUy * params.cdsRadius };
+      // Throat points BACK along the street (toward A)
+      bestDir = { x: -streetUx, y: -streetUy };
     }
-    // Also check endpoint A
+    // Check endpoint A
     const dA = Math.hypot(worldX - a.x, worldY - a.y);
     if (dA < bestDist) {
       bestDist = dA;
-      const tdx = a.x - worldX, tdy = a.y - worldY;
-      const tlen = Math.sqrt(tdx*tdx + tdy*tdy) || 1;
-      bestDir = { x: tdx/tlen, y: tdy/tlen };
+      snapPt = { x: a.x - streetUx * params.cdsRadius, y: a.y - streetUy * params.cdsRadius };
+      bestDir = { x: streetUx, y: streetUy };
     }
   }
 
   state.culdesacs.push({
-    center: { x: worldX, y: worldY },
+    center: snapPt,
     rowRadius: params.cdsRadius,
     pavedRadius: params.cdsRadius - 0.5,
     throatWidth: params.cdsThroatWidth,
@@ -5369,9 +5388,9 @@ function placeCdsAt(worldX, worldY) {
     isManual: true
   });
 
-  // Generate radial lots around the cul-de-sac bulb
+  // Generate radial lots around the cul-de-sac bulb — only on the non-throat side
   const cdsLots = generateCulDeSacLots(
-    { x: worldX, y: worldY }, params.cdsRadius, params.minLotDepth,
+    snapPt, params.cdsRadius, params.minLotDepth,
     params.minLotWidth, state.lots.length + 1, params,
     state.vertices
   );
@@ -5844,6 +5863,17 @@ function regenerateLots() {
           }
         }
         if (overlapsCds) continue;
+
+        // Check this lot doesn't overlap existing lots (perimeter or previous)
+        let overlapsLot = false;
+        for (const existing of state.lots) {
+          const eCx = existing.polygon.reduce((s,p) => s+p.x, 0) / existing.polygon.length;
+          const eCy = existing.polygon.reduce((s,p) => s+p.y, 0) / existing.polygon.length;
+          if (Math.hypot(lotCx - eCx, lotCy - eCy) < params.minLotWidth * 0.5) {
+            overlapsLot = true; break;
+          }
+        }
+        if (overlapsLot) continue;
 
         const lotCrit = getLotCriteriaAt(lotCx, lotCy, params);
         const isCompliant = area >= lotCrit.minLotArea && actualWidth >= lotCrit.minLotWidth;
