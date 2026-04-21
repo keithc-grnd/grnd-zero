@@ -5642,8 +5642,105 @@ function generateFromSpine() {
     }
   }
 
-  // STEP 4: No interior streets for now — doughnut only
-  // Interior streets will be added back when user requests
+  // STEP 4: Fill the doughnut hole
+  // E-W streets inside the perimeter road, connected to it, with lots between
+  if (perimRoadPoly.length >= 3) {
+    const intXs = perimRoadPoly.map(v => v.x);
+    const intYs = perimRoadPoly.map(v => v.y);
+    const intCx = (Math.min(...intXs) + Math.max(...intXs)) / 2;
+    const intCy = (Math.min(...intYs) + Math.max(...intYs)) / 2;
+    const intH = Math.max(...intYs) - Math.min(...intYs);
+    const intW = Math.max(...intXs) - Math.min(...intXs);
+
+    // E-W streets spaced at block intervals inside the perimeter road
+    const blockSpacing = 2 * lotDepth + params.rowWidth;
+    const interiorStreets = [];
+
+    for (let y = intCy - intH; y <= intCy + intH; y += blockSpacing) {
+      // Clip E-W line to the perimeter road polygon
+      const farX = intW + 500;
+      const segs = clipLineToPolygon(
+        { x: intCx - farX, y: y },
+        { x: intCx + farX, y: y },
+        perimRoadPoly
+      );
+      for (const seg of segs) {
+        const segLen = Math.hypot(seg[1].x - seg[0].x, seg[1].y - seg[0].y);
+        if (segLen < lotWidth * 2) continue;
+        if (!pointInPolygon(seg[0], state.vertices) || !pointInPolygon(seg[1], state.vertices)) continue;
+
+        const st = {
+          centerline: [seg[0], seg[1]],
+          rowLeft: [
+            { x: seg[0].x, y: seg[0].y + halfROW },
+            { x: seg[1].x, y: seg[1].y + halfROW }
+          ],
+          rowRight: [
+            { x: seg[0].x, y: seg[0].y - halfROW },
+            { x: seg[1].x, y: seg[1].y - halfROW }
+          ],
+          isPrimary: false,
+          _name: ordinalStreet(interiorStreets.length + 1)
+        };
+        state.streets.push(st);
+        interiorStreets.push({ y, seg, st });
+      }
+    }
+
+    // Lots between consecutive interior streets
+    interiorStreets.sort((a, b) => a.y - b.y);
+
+    for (let si = 0; si < interiorStreets.length - 1; si++) {
+      const s1 = interiorStreets[si];
+      const s2 = interiorStreets[si + 1];
+      const blockTop = s1.y + halfROW;    // top ROW edge of lower street
+      const blockBot = s2.y - halfROW;    // bottom ROW edge of upper street
+      const blockH = blockBot - blockTop;
+      if (blockH < 30) continue;
+
+      // Two rows of lots back-to-back
+      const rowDepth = Math.min(blockH / 2, lotDepth);
+
+      for (const row of [0, 1]) {
+        const rowY = row === 0 ? blockTop : blockBot - rowDepth;
+        // Use the wider of the two streets for lot width
+        const streetSeg = row === 0 ? s1.seg : s2.seg;
+        const segLen = Math.hypot(streetSeg[1].x - streetSeg[0].x, streetSeg[1].y - streetSeg[0].y);
+        const numLots = Math.max(1, Math.floor(segLen / lotWidth));
+        const actualW = segLen / numLots;
+
+        for (let li = 0; li < numLots; li++) {
+          const t0 = li / numLots, t1 = (li + 1) / numLots;
+          const x0 = streetSeg[0].x + (streetSeg[1].x - streetSeg[0].x) * t0;
+          const x1 = streetSeg[0].x + (streetSeg[1].x - streetSeg[0].x) * t1;
+
+          const lotPoly = [
+            { x: x0, y: rowY },
+            { x: x1, y: rowY },
+            { x: x1, y: rowY + rowDepth },
+            { x: x0, y: rowY + rowDepth }
+          ];
+
+          const lCx = (x0 + x1) / 2, lCy = rowY + rowDepth / 2;
+          if (!pointInPolygon({ x: lCx, y: lCy }, state.vertices)) continue;
+
+          const area = polygonArea(lotPoly);
+          if (area < 500) continue;
+
+          const criteria = getLotCriteriaAt(lCx, lCy, params);
+          const reqArea = criteria.minLotArea || params.minLotArea;
+          const reqWidth = criteria.minLotWidth || lotWidth;
+          const compliant = area >= reqArea && actualW >= reqWidth;
+
+          state.lots.push({
+            polygon: lotPoly, area, number: lotNum++,
+            compliant, width: actualW, depth: rowDepth,
+            minAreaRequired: reqArea, minWidthRequired: reqWidth
+          });
+        }
+      }
+    }
+  }
 
   // Strict: only keep streets with both endpoints inside the original boundary
   state.streets = state.streets.filter(st => {
