@@ -5508,7 +5508,8 @@ function generateFromSpine() {
   const setback = params.perimeterSetback;
 
   // Buffer boundary by setback
-  const buffer = offsetPolygon(state.vertices, setback);
+  // No setback gap — setbacks are inside the lots, not between boundary and lot
+  const buffer = offsetPolygon(state.vertices, 0.1); // minimal offset for interior calc
   if (buffer.length < 3) { showToast('Buffer error', 'error'); return; }
   state.bufferedBoundary = buffer;
 
@@ -5574,12 +5575,12 @@ function generateFromSpine() {
 
       let placed = false;
       for (let tryDepth = perimInward; tryDepth >= 30; tryDepth -= 10) {
-        // Lot starts at setback from boundary, extends inward
+        // Lot starts at boundary edge (no gap — setback is inside the lot)
         const lotPoly = [
-          { x: p0.x + nx*setback, y: p0.y + ny*setback },
-          { x: p1.x + nx*setback, y: p1.y + ny*setback },
-          { x: p1.x + nx*(setback + tryDepth), y: p1.y + ny*(setback + tryDepth) },
-          { x: p0.x + nx*(setback + tryDepth), y: p0.y + ny*(setback + tryDepth) }
+          { x: p0.x, y: p0.y },
+          { x: p1.x, y: p1.y },
+          { x: p1.x + nx*tryDepth, y: p1.y + ny*tryDepth },
+          { x: p0.x + nx*tryDepth, y: p0.y + ny*tryDepth }
         ];
 
         const lotCx = (lotPoly[0].x + lotPoly[1].x + lotPoly[2].x + lotPoly[3].x) / 4;
