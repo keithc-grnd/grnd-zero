@@ -5279,6 +5279,7 @@ function placeEntryAt(worldX, worldY) {
   state.placingEntry = false;
   document.getElementById('btnPlaceEntry').textContent = 'Place Entry';
   document.getElementById('canvas-hint').textContent = 'Entry placed — click Generate or place more elements';
+  cleanupPerimeterLots();
   regenerateLots();
   render();
   showToast('Entry placed perpendicular to boundary', 'success');
@@ -5332,6 +5333,7 @@ function placeStreetPoint(worldX, worldY) {
   state.streetStartPt = null;
   document.getElementById('btnPlaceStreet').textContent = 'Place Street';
   document.getElementById('canvas-hint').textContent = 'Street placed — lots will regenerate';
+  cleanupPerimeterLots();
   regenerateLots();
   render();
   showToast('Street placed', 'success');
@@ -5395,6 +5397,9 @@ function placeCdsAt(worldX, worldY) {
     state.vertices
   );
   state.lots.push(...cdsLots);
+
+  // Remove perimeter lots that conflict with the new cul-de-sac
+  cleanupPerimeterLots();
 
   state.placingCds = false;
   document.getElementById('btnPlaceCds').textContent = 'Place Cul-de-sac';
@@ -5790,8 +5795,41 @@ function generateFromSpine() {
     state.streets.length + ' streets', flagged > 0 ? 'warning' : 'success');
 }
 
+// Remove perimeter lots that conflict with streets or cul-de-sacs
+function cleanupPerimeterLots() {
+  const params = getDesignParams();
+  const halfROW = params.rowWidth / 2;
+
+  state.lots = state.lots.filter(lot => {
+    const cx = lot.polygon.reduce((s,p) => s+p.x, 0) / lot.polygon.length;
+    const cy = lot.polygon.reduce((s,p) => s+p.y, 0) / lot.polygon.length;
+
+    // Check against non-perimeter streets (manually placed)
+    for (const st of state.streets) {
+      if (st.isPerimeter) continue;
+      const [a, b] = st.centerline;
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const len = Math.sqrt(dx*dx+dy*dy) || 1;
+      const t = Math.max(0, Math.min(1, ((cx-a.x)*dx+(cy-a.y)*dy)/(len*len)));
+      const px = a.x+t*dx, py = a.y+t*dy;
+      // Remove if lot centroid is within street ROW + half lot depth
+      if (Math.hypot(cx-px, cy-py) < halfROW + params.minLotDepth * 0.3) return false;
+    }
+
+    // Check against cul-de-sacs
+    for (const cds of state.culdesacs) {
+      const dist = Math.hypot(cx - cds.center.x, cy - cds.center.y);
+      // Remove if lot is within CDS outer radius (ROW + lot depth)
+      if (dist < cds.rowRadius + params.minLotDepth) return false;
+    }
+
+    return true; // keep the lot
+  });
+}
+
 function regenerateLots() {
   if (!state.isClosed) return;
+  cleanupPerimeterLots();
   const params = getDesignParams();
 
   // Keep perimeter lots, only clear interior lots
