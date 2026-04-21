@@ -5535,7 +5535,7 @@ function generateFromSpine() {
 
   // STEP 1: Perimeter streets — offset buffer inward by lotDepth + halfROW
   // This creates the "perimeter road" that the perimeter lots front on
-  const perimStreetOffset = lotDepth + halfROW;
+  const perimStreetOffset = lotWidth + halfROW; // street runs one lot-width inside boundary
   const perimRoad = offsetPolygon(buffer, perimStreetOffset);
 
   // Add perimeter road segments as streets
@@ -5592,9 +5592,11 @@ function generateFromSpine() {
     let nx = -uy, ny = ux;
     if (nx*toCx + ny*toCy < 0) { nx = -nx; ny = -ny; }
 
-    // Number of lots along this edge — use smaller of lotWidth or edge length
-    const effLotWidth = Math.min(lotWidth, edgeLen);
-    const numLots = Math.max(1, Math.floor(edgeLen / effLotWidth));
+    // Perimeter lots: long side (lotDepth) runs ALONG boundary, short side (lotWidth) goes INWARD
+    const perimAlongEdge = lotDepth;  // 100' along boundary
+    const perimInward = lotWidth;      // 60' toward interior
+
+    const numLots = Math.max(1, Math.floor(edgeLen / perimAlongEdge));
     const actualWidth = edgeLen / numLots;
 
     for (let li = 0; li < numLots; li++) {
@@ -5602,9 +5604,8 @@ function generateFromSpine() {
       const p0 = { x: a.x + dx*t0, y: a.y + dy*t0 };
       const p1 = { x: a.x + dx*t1, y: a.y + dy*t1 };
 
-      // Try progressively shorter depths until the lot fits inside boundary
       let placed = false;
-      for (let tryDepth = lotDepth; tryDepth >= 30; tryDepth -= 10) {
+      for (let tryDepth = perimInward; tryDepth >= 30; tryDepth -= 10) {
         const lotPoly = [
           { x: p0.x, y: p0.y },
           { x: p1.x, y: p1.y },
