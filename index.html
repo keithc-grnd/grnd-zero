@@ -1470,23 +1470,7 @@ input[type="range"]::-moz-range-thumb {
 
         <hr class="param-divider" />
 
-        <div class="param-group-label">Generate Subdivision</div>
-        <p style="font-size:9px; color:var(--text-secondary); line-height:1.4; margin-bottom:6px;">
-          Parallel streets across the parcel with lots on both sides.<br>
-          Set orientation (0°=E-W streets, 90°=N-S streets).<br>
-          No spine road needed — just click Generate.
-        </p>
-        <button class="btn btn-primary" onclick="generateFromSpine()" style="font-size:12px; padding:10px 14px;">
-          Generate Subdivision
-        </button>
-
-        <hr class="param-divider" />
-
-        <div class="param-group-label">Full Auto-Generate</div>
-        <button class="btn" onclick="generateLayout()" id="btnGenerate">
-          Auto-Generate Layout
-        </button>
-        <button class="btn" onclick="regenerateLots()" style="margin-top:6px;">Regenerate Lots Only</button>
+        <button class="btn" onclick="regenerateLots()" style="margin-top:6px;">Regenerate Lots</button>
         <button class="btn" onclick="clearLayout()" style="margin-top:6px;">Clear Layout Only</button>
       </div>
     </div>
@@ -5350,6 +5334,30 @@ function startPlaceCds() {
 
 function placeCdsAt(worldX, worldY) {
   const params = getDesignParams();
+
+  // Find nearest street endpoint to orient the cul-de-sac
+  let bestDist = Infinity, bestDir = { x: 0, y: -1 };
+  for (const st of state.streets) {
+    const [a, b] = st.centerline;
+    // Check distance to endpoint B (end of street)
+    const dB = Math.hypot(worldX - b.x, worldY - b.y);
+    if (dB < bestDist) {
+      bestDist = dB;
+      // Direction from CDS center BACK toward the street (throat direction)
+      const tdx = b.x - worldX, tdy = b.y - worldY;
+      const tlen = Math.sqrt(tdx*tdx + tdy*tdy) || 1;
+      bestDir = { x: tdx/tlen, y: tdy/tlen };
+    }
+    // Also check endpoint A
+    const dA = Math.hypot(worldX - a.x, worldY - a.y);
+    if (dA < bestDist) {
+      bestDist = dA;
+      const tdx = a.x - worldX, tdy = a.y - worldY;
+      const tlen = Math.sqrt(tdx*tdx + tdy*tdy) || 1;
+      bestDir = { x: tdx/tlen, y: tdy/tlen };
+    }
+  }
+
   state.culdesacs.push({
     center: { x: worldX, y: worldY },
     rowRadius: params.cdsRadius,
@@ -5357,22 +5365,23 @@ function placeCdsAt(worldX, worldY) {
     throatWidth: params.cdsThroatWidth,
     throatLength: params.cdsThroatLength,
     type: params.cdsType,
-    direction: { x: 0, y: -1 },
+    direction: bestDir,
     isManual: true
   });
-  // Generate lots around it
+
+  // Generate radial lots around the cul-de-sac bulb
   const cdsLots = generateCulDeSacLots(
     { x: worldX, y: worldY }, params.cdsRadius, params.minLotDepth,
     params.minLotWidth, state.lots.length + 1, params,
-    state.bufferedBoundary.length > 2 ? state.bufferedBoundary : state.vertices
+    state.vertices
   );
   state.lots.push(...cdsLots);
 
   state.placingCds = false;
   document.getElementById('btnPlaceCds').textContent = 'Place Cul-de-sac';
-  document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed';
+  document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — ' + cdsLots.length + ' radial lots';
   render();
-  showToast('Cul-de-sac placed with ' + cdsLots.length + ' lots', 'success');
+  showToast('Cul-de-sac placed with ' + cdsLots.length + ' radial lots', 'success');
 }
 
 // -- Place Knuckle: click at intersection --
