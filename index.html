@@ -3671,7 +3671,9 @@ function longestAxis(poly) {
 // Generate cul-de-sac lots radially around a center point
 function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumStart, params, buffer) {
   const lots = [];
-  const outerR = rowRadius + lotDepth;
+  // Radial lot depth — use lotDepth but cap so lots don't extend too far
+  const radialDepth = Math.min(lotDepth, 100);
+  const outerR = rowRadius + radialDepth;
   const circumference = 2 * Math.PI * rowRadius;
   const numLots = Math.max(5, Math.floor(circumference / minLotWidth));
   const angleStep = (2 * Math.PI) / numLots;
@@ -3691,15 +3693,19 @@ function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumSt
     const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
     if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
 
-    // Skip lots that overlap with existing streets
+    // Skip lots that overlap with streets (but NOT the connecting street or perimeter)
     let overlaps = false;
     for (const st of state.streets) {
+      if (st.isPerimeter) continue; // don't reject lots near perimeter road
       const [sa, sb] = st.centerline;
+      // Skip the street that connects to this CDS (within 2x radius)
+      const stMx = (sa.x+sb.x)/2, stMy = (sa.y+sb.y)/2;
+      if (Math.hypot(stMx - center.x, stMy - center.y) < rowRadius * 3) continue;
       const sdx = sb.x-sa.x, sdy = sb.y-sa.y;
       const slen = Math.sqrt(sdx*sdx+sdy*sdy) || 1;
       const t = Math.max(0, Math.min(1, ((lotCx-sa.x)*sdx+(lotCy-sa.y)*sdy)/(slen*slen)));
       const px = sa.x+t*sdx, py = sa.y+t*sdy;
-      if (Math.hypot(lotCx-px, lotCy-py) < params.rowWidth) { overlaps = true; break; }
+      if (Math.hypot(lotCx-px, lotCy-py) < params.rowWidth * 0.8) { overlaps = true; break; }
     }
     if (overlaps) continue;
 
