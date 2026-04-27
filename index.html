@@ -1452,6 +1452,10 @@ input[type="range"]::-moz-range-thumb {
           <button class="btn" onclick="startPlaceCds()" id="btnPlaceCds">Place Cul-de-sac</button>
           <button class="btn" onclick="startPlaceBasin()" id="btnPlaceBasin">Place Basin</button>
         </div>
+        <div class="btn-group" style="margin-top:4px;">
+          <button class="btn" onclick="startMergeLots()" id="btnMergeLots">Merge Lots</button>
+          <button class="btn" onclick="startDeleteLot()" id="btnDeleteLot">Delete Lot</button>
+        </div>
 
         <hr class="param-divider" />
 
@@ -5488,6 +5492,204 @@ function placeKnuckleAt(worldX, worldY) {
 }
 
 // ============================================
+// ============================================
+// MERGE / DELETE LOTS
+// ============================================
+state.mergingLots = false;
+state.deletingLot = false;
+state.mergeFirstLot = -1;
+
+function startMergeLots() {
+  state.mergingLots = true;
+  state.deletingLot = false;
+  state.mergeFirstLot = -1;
+  document.getElementById('btnMergeLots').textContent = 'Click first lot...';
+  document.getElementById('canvas-hint').textContent = 'Click on a lot to start merge, then click adjacent lot to combine';
+}
+
+function startDeleteLot() {
+  state.deletingLot = true;
+  state.mergingLots = false;
+  document.getElementById('btnDeleteLot').textContent = 'Click a line...';
+  document.getElementById('canvas-hint').textContent = 'Click on any lot line to delete it — adjacent lots will merge';
+}
+
+function findLotAtPoint(wx, wy) {
+  for (let i = 0; i < state.lots.length; i++) {
+    if (pointInPolygon({ x: wx, y: wy }, state.lots[i].polygon)) return i;
+  }
+  return -1;
+}
+
+function handleMergeClick(wx, wy) {
+  const idx = findLotAtPoint(wx, wy);
+  if (idx < 0) { showToast('No lot at that location', 'warning'); return; }
+
+  if (state.mergeFirstLot < 0) {
+    state.mergeFirstLot = idx;
+    // Highlight the selected lot
+    state.lots[idx]._selected = true;
+    render();
+    document.getElementById('btnMergeLots').textContent = 'Click second lot...';
+    document.getElementById('canvas-hint').textContent = 'Now click an adjacent lot to merge with lot ' + state.lots[idx].number;
+    return;
+  }
+
+  // Second lot clicked — merge the two
+  const lot1 = state.lots[state.mergeFirstLot];
+  const lot2 = state.lots[idx];
+  if (state.mergeFirstLot === idx) {
+    showToast('Click a different lot', 'warning');
+    return;
+  }
+
+  // Create merged lot — use convex hull of all vertices
+  const allPts = [...lot1.polygon, ...lot2.polygon];
+  const merged = convexHull(allPts);
+  const mergedArea = polygonArea(merged);
+
+  // Get PA criteria
+  const params = getDesignParams();
+  const cx = merged.reduce((s,p) => s+p.x, 0) / merged.length;
+  const cy = merged.reduce((s,p) => s+p.y, 0) / merged.length;
+  const criteria = getLotCriteriaAt(cx, cy, params);
+  const minArea = criteria.minLotArea || params.minLotArea;
+
+  // Remove the two original lots
+  lot1._selected = false;
+  const ids = [state.mergeFirstLot, idx].sort((a,b) => b-a);
+  for (const id of ids) state.lots.splice(id, 1);
+
+  // Add merged lot
+  state.lots.push({
+    polygon: merged,
+    area: mergedArea,
+    number: state.lots.length + 1,
+    compliant: mergedArea >= minArea,
+    width: 0, depth: 0,
+    minAreaRequired: minArea,
+    isMerged: true
+  });
+
+  // Renumber
+  state.lots.forEach((l, i) => l.number = i + 1);
+
+  state.mergeFirstLot = -1;
+  document.getElementById('btnMergeLots').textContent = 'Merge Lots';
+  document.getElementById('canvas-hint').textContent = 'Merged — ' + Math.round(mergedArea).toLocaleString() + ' sf' +
+    (mergedArea >= minArea ? ' (compliant)' : ' (UNDER ' + minArea.toLocaleString() + ' sf min)');
+  render();
+  showToast('Lots merged: ' + Math.round(mergedArea).toLocaleString() + ' sf', mergedArea >= minArea ? 'success' : 'warning');
+}
+
+function handleDeleteLineClick(wx, wy) {
+  const params = getDesignParams();
+  const threshold = state.scale * 15 / state.zoom;
+
+  // Find nearest lot edge to the click point
+  let bestDist = threshold, bestLotIdx = -1, bestEdgeIdx = -1;
+  for (let li = 0; li < state.lots.length; li++) {
+    const poly = state.lots[li].polygon;
+    for (let ei = 0; ei < poly.length; ei++) {
+      const ej = (ei + 1) % poly.length;
+      const a = poly[ei], b = poly[ej];
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const len = Math.sqrt(dx*dx+dy*dy) || 1;
+      const t = Math.max(0, Math.min(1, ((wx-a.x)*dx+(wy-a.y)*dy)/(len*len)));
+      const px = a.x+t*dx, py = a.y+t*dy;
+      const d = Math.hypot(wx-px, wy-py);
+      if (d < bestDist) {
+        bestDist = d;
+        bestLotIdx = li;
+        bestEdgeIdx = ei;
+      }
+    }
+  }
+
+  if (bestLotIdx < 0) { showToast('No lot line found near click', 'warning'); return; }
+
+  // Find the lot on the OTHER side of this edge
+  const lot1 = state.lots[bestLotIdx];
+  const edgeA = lot1.polygon[bestEdgeIdx];
+  const edgeB = lot1.polygon[(bestEdgeIdx + 1) % lot1.polygon.length];
+  const edgeMx = (edgeA.x+edgeB.x)/2, edgeMy = (edgeA.y+edgeB.y)/2;
+
+  // Find adjacent lot (shares this edge — centroid is on the other side)
+  let adjIdx = -1;
+  for (let li = 0; li < state.lots.length; li++) {
+    if (li === bestLotIdx) continue;
+    const poly2 = state.lots[li].polygon;
+    // Check if lot2 has an edge very close to this edge
+    for (let ei = 0; ei < poly2.length; ei++) {
+      const ej = (ei+1) % poly2.length;
+      const c = poly2[ei], d = poly2[ej];
+      const cMx = (c.x+d.x)/2, cMy = (c.y+d.y)/2;
+      if (Math.hypot(cMx-edgeMx, cMy-edgeMy) < threshold * 2) {
+        adjIdx = li;
+        break;
+      }
+    }
+    if (adjIdx >= 0) break;
+  }
+
+  if (adjIdx >= 0) {
+    // Merge the two lots
+    const lot2 = state.lots[adjIdx];
+    const allPts = [...lot1.polygon, ...lot2.polygon];
+    const merged = convexHull(allPts);
+    const mergedArea = polygonArea(merged);
+    const cx = merged.reduce((s,p)=>s+p.x,0)/merged.length;
+    const cy = merged.reduce((s,p)=>s+p.y,0)/merged.length;
+    const criteria = getLotCriteriaAt(cx, cy, params);
+    const minArea = criteria.minLotArea || params.minLotArea;
+
+    // Remove both lots (higher index first)
+    const ids = [bestLotIdx, adjIdx].sort((a,b)=>b-a);
+    for (const id of ids) state.lots.splice(id, 1);
+
+    state.lots.push({
+      polygon: merged, area: mergedArea,
+      number: state.lots.length + 1,
+      compliant: mergedArea >= minArea,
+      minAreaRequired: minArea,
+      isMerged: true
+    });
+    state.lots.forEach((l,i) => l.number = i+1);
+    render();
+    showToast('Line deleted — lots merged: ' + Math.round(mergedArea).toLocaleString() + ' sf', 'success');
+  } else {
+    // No adjacent lot — just delete the clicked lot
+    state.lots.splice(bestLotIdx, 1);
+    state.lots.forEach((l,i) => l.number = i+1);
+    render();
+    showToast('Lot removed', 'info');
+  }
+
+  // Stay in delete line mode for more clicks
+  document.getElementById('canvas-hint').textContent = 'Click another line or click Delete Lot button again to exit';
+}
+
+// Simple convex hull (Graham scan)
+function convexHull(points) {
+  if (points.length < 3) return points;
+  const pts = points.slice().sort((a,b) => a.x - b.x || a.y - b.y);
+  const cross = (o, a, b) => (a.x-o.x)*(b.y-o.y) - (a.y-o.y)*(b.x-o.x);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length-1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+// ============================================
 // RETENTION BASIN
 // ============================================
 state.basins = [];
@@ -6824,6 +7026,8 @@ canvas.addEventListener('click', function(e) {
   if (state.placingCds) { placeCdsAt(wx, wy); return; }
   if (state.placingKnuckle) { placeKnuckleAt(wx, wy); return; }
   if (state.placingBasin) { placeBasinPoint(wx, wy); return; }
+  if (state.mergingLots) { handleMergeClick(wx, wy); return; }
+  if (state.deletingLot) { handleDeleteLineClick(wx, wy); return; }
 
   // Edit mode: select street, cul-de-sac, or knuckle
   if (state.editMode) {
