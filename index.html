@@ -5458,56 +5458,77 @@ function placeCdsAt(worldX, worldY) {
   state.drawingCdsLimit = true;
   state.cdsLimitTarget = state.culdesacs.length - 1; // index of CDS just placed
   state.cdsLimitPt1 = null;
-  document.getElementById('canvas-hint').textContent = 'Now click 2 points to draw a LIMIT LINE across the rear of the CDS lots (or press Esc to skip)';
+  document.getElementById('canvas-hint').textContent = 'Click 4 points to draw 3 LIMIT LINES around the rear of the CDS lots (or click another tool to skip)';
   showToast(cdsLots.length + ' radial lots — draw a limit line for rear lot lines', 'info');
 }
 
 // Handle limit line clicks for CDS
 function handleCdsLimitClick(wx, wy) {
-  if (!state.cdsLimitPt1) {
-    state.cdsLimitPt1 = { x: wx, y: wy };
-    document.getElementById('canvas-hint').textContent = 'Click second point of limit line';
+  if (!state.cdsLimitPts) state.cdsLimitPts = [];
+  state.cdsLimitPts.push({ x: wx, y: wy });
+
+  if (state.cdsLimitPts.length < 4) {
+    document.getElementById('canvas-hint').textContent = 'Click point ' + (state.cdsLimitPts.length + 1) + ' of 4 for limit line';
+    // Draw progress dots
     render();
+    // Draw the placed points
+    for (const pt of state.cdsLimitPts) {
+      const [px, py] = worldToScreen(pt.x, pt.y);
+      ctx.fillStyle = 'rgba(255, 150, 0, 0.9)';
+      ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI*2); ctx.fill();
+    }
+    // Draw lines between placed points
+    if (state.cdsLimitPts.length > 1) {
+      ctx.strokeStyle = 'rgba(255, 150, 0, 0.7)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 3]);
+      ctx.beginPath();
+      const [fx, fy] = worldToScreen(state.cdsLimitPts[0].x, state.cdsLimitPts[0].y);
+      ctx.moveTo(fx, fy);
+      for (let i = 1; i < state.cdsLimitPts.length; i++) {
+        const [px, py] = worldToScreen(state.cdsLimitPts[i].x, state.cdsLimitPts[i].y);
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     return;
   }
 
-  const p1 = state.cdsLimitPt1;
-  const p2 = { x: wx, y: wy };
+  // All 4 points collected — 3 line segments
+  const pts = state.cdsLimitPts;
+  const limitSegs = [
+    [pts[0], pts[1]],
+    [pts[1], pts[2]],
+    [pts[2], pts[3]]
+  ];
+
   const cdsIdx = state.cdsLimitTarget;
   const cds = state.culdesacs[cdsIdx];
   const params = getDesignParams();
 
-  // Trim/extend all CDS radial lots to intersect the limit line
-  // The limit line is defined by p1→p2
-  const ldx = p2.x - p1.x, ldy = p2.y - p1.y;
-  const llen = Math.sqrt(ldx*ldx + ldy*ldy) || 1;
-  const lux = ldx/llen, luy = ldy/llen;
-  const lnx = -luy, lny = lux; // normal to limit line
-
-  // Rebuild CDS lots: inner edge stays on CDS ROW, outer edge projects to limit line
-  const newLots = [];
+  // Rebuild CDS lots: radial side lines extend to nearest limit segment
   const cdsLots = state.lots.filter(l => l.isCdsLot);
   const otherLots = state.lots.filter(l => !l.isCdsLot);
+  const newLots = [];
 
   for (const lot of cdsLots) {
-    // Check this lot belongs to the current CDS (near its center)
     const lotCx = lot.polygon.reduce((s,p)=>s+p.x,0)/lot.polygon.length;
     const lotCy = lot.polygon.reduce((s,p)=>s+p.y,0)/lot.polygon.length;
     if (Math.hypot(lotCx - cds.center.x, lotCy - cds.center.y) > cds.rowRadius + params.minLotDepth + 50) {
-      newLots.push(lot); // not this CDS's lot, keep as-is
+      newLots.push(lot);
       continue;
     }
 
-    // Inner edge = polygon[0] and polygon[3] (on CDS ROW circle)
     const inner1 = lot.polygon[0];
     const inner2 = lot.polygon[lot.polygon.length - 1];
 
-    // Project each inner point outward (radially from CDS center) to the limit line
-    const outer1 = projectPointToLine(inner1, cds.center, p1, p2);
-    const outer2 = projectPointToLine(inner2, cds.center, p1, p2);
+    // Project each radial line to the NEAREST of the 3 limit segments
+    const outer1 = projectToNearestSeg(inner1, cds.center, limitSegs);
+    const outer2 = projectToNearestSeg(inner2, cds.center, limitSegs);
 
     if (!outer1 || !outer2) {
-      newLots.push(lot); // can't project, keep original
+      newLots.push(lot);
       continue;
     }
 
@@ -5527,33 +5548,34 @@ function handleCdsLimitClick(wx, wy) {
   state.lots = [...otherLots, ...newLots];
   state.lots.forEach((l,i) => l.number = i+1);
 
-  // Store limit line for rendering
+  // Store limit lines for rendering
   state.cdsLimitLines = state.cdsLimitLines || [];
-  state.cdsLimitLines.push([p1, p2]);
+  for (const seg of limitSegs) state.cdsLimitLines.push(seg);
 
   state.drawingCdsLimit = false;
-  state.cdsLimitPt1 = null;
+  state.cdsLimitPts = null;
   render();
-  showToast('Limit line applied — rear lot lines squared off', 'success');
-  document.getElementById('canvas-hint').textContent = 'CDS lots trimmed to limit line';
+  showToast('3-segment limit line applied — rear lot lines squared off', 'success');
+  document.getElementById('canvas-hint').textContent = 'CDS lots trimmed to limit lines';
 }
 
-// Project a point radially from center onto a line defined by lineA→lineB
-function projectPointToLine(pt, center, lineA, lineB) {
-  // Ray from center through pt
+// Project a point radially from center onto the nearest of multiple line segments
+function projectToNearestSeg(pt, center, segs) {
   const rdx = pt.x - center.x, rdy = pt.y - center.y;
   const rlen = Math.sqrt(rdx*rdx + rdy*rdy) || 1;
-
-  // Extend ray far out
   const farPt = { x: center.x + (rdx/rlen) * 5000, y: center.y + (rdy/rlen) * 5000 };
 
-  // Intersect ray with the limit line
-  const ix = segSegIntersect(center, farPt, lineA, lineB);
-  if (ix) return ix;
-
-  // If no intersection with segment, try infinite line
-  const lix = lineLineIntersect(center, farPt, lineA, lineB);
-  return lix;
+  let bestDist = Infinity, bestPt = null;
+  for (const [a, b] of segs) {
+    // Try segment intersection first
+    let ix = segSegIntersect(center, farPt, a, b);
+    if (!ix) ix = lineLineIntersect(center, farPt, a, b);
+    if (ix) {
+      const d = Math.hypot(ix.x - pt.x, ix.y - pt.y);
+      if (d < bestDist) { bestDist = d; bestPt = ix; }
+    }
+  }
+  return bestPt;
 }
 
 // -- Place Knuckle: click at intersection --
