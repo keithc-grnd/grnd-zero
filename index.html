@@ -3693,7 +3693,8 @@ function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumSt
       number: lotNumStart + i,
       compliant: area >= params.minLotArea,
       width: rowRadius * angleStep,
-      depth: lotDepth
+      depth: lotDepth,
+      isCdsLot: true
     });
   }
   return lots;
@@ -6039,11 +6040,12 @@ function cleanupPerimeterLots() {
       if (Math.hypot(cx-px, cy-py) < halfROW + params.minLotDepth * 0.3) return false;
     }
 
-    // Check against cul-de-sacs
-    for (const cds of state.culdesacs) {
-      const dist = Math.hypot(cx - cds.center.x, cy - cds.center.y);
-      // Remove if lot is within CDS outer radius (ROW + lot depth)
-      if (dist < cds.rowRadius + params.minLotDepth) return false;
+    // Check against cul-de-sacs — but keep CDS radial lots (isCdsLot flag)
+    if (!lot.isCdsLot) {
+      for (const cds of state.culdesacs) {
+        const dist = Math.hypot(cx - cds.center.x, cy - cds.center.y);
+        if (dist < cds.rowRadius + params.minLotDepth) return false;
+      }
     }
 
     return true; // keep the lot
@@ -7002,8 +7004,9 @@ canvas.addEventListener('mouseup', function(e) {
     // Regenerate radial lots at new position
     const cds = state.culdesacs[state.selectedCds];
     const params = getDesignParams();
-    // Remove any existing lots near the old or new CDS position
+    // Remove existing CDS lots (will be regenerated) and nearby perimeter lots
     state.lots = state.lots.filter(lot => {
+      if (lot.isCdsLot) return false; // remove old CDS lots — will regenerate
       const cx = lot.polygon.reduce((s,p) => s+p.x,0) / lot.polygon.length;
       const cy = lot.polygon.reduce((s,p) => s+p.y,0) / lot.polygon.length;
       return Math.hypot(cx - cds.center.x, cy - cds.center.y) > cds.rowRadius + params.minLotDepth + 10;
