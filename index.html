@@ -3671,29 +3671,42 @@ function longestAxis(poly) {
 // Generate cul-de-sac lots radially around a center point
 function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumStart, params, buffer) {
   const lots = [];
-  const outerR = rowRadius + lotDepth;
   const circumference = 2 * Math.PI * rowRadius;
   const numLots = Math.max(5, Math.floor(circumference / minLotWidth));
   const angleStep = (2 * Math.PI) / numLots;
 
-  // Generate ALL radial lots — no filtering, no checks
+  // Use PA-specific lot depth if available
+  const cx = center.x, cy = center.y;
+  const criteria = getLotCriteriaAt(cx, cy, params);
+  const depth = criteria.minLotDepth || lotDepth;
+  const minArea = criteria.minLotArea || params.minLotArea;
+
   for (let i = 0; i < numLots; i++) {
     const a1 = i * angleStep;
     const a2 = (i + 1) * angleStep;
-    const lotPoly = [
-      { x: center.x + Math.cos(a1) * rowRadius, y: center.y + Math.sin(a1) * rowRadius },
-      { x: center.x + Math.cos(a1) * outerR, y: center.y + Math.sin(a1) * outerR },
-      { x: center.x + Math.cos(a2) * outerR, y: center.y + Math.sin(a2) * outerR },
-      { x: center.x + Math.cos(a2) * rowRadius, y: center.y + Math.sin(a2) * rowRadius }
-    ];
+
+    // Inner edge: on the CDS ROW circle (radial)
+    const inner1 = { x: cx + Math.cos(a1) * rowRadius, y: cy + Math.sin(a1) * rowRadius };
+    const inner2 = { x: cx + Math.cos(a2) * rowRadius, y: cy + Math.sin(a2) * rowRadius };
+
+    // Outer edge: squared off at exactly lotDepth from inner edge
+    // Project outward from each inner point by lotDepth in the radial direction
+    const mid = (a1 + a2) / 2;
+    const radX = Math.cos(mid), radY = Math.sin(mid);
+
+    const outer1 = { x: inner1.x + Math.cos(a1) * depth, y: inner1.y + Math.sin(a1) * depth };
+    const outer2 = { x: inner2.x + Math.cos(a2) * depth, y: inner2.y + Math.sin(a2) * depth };
+
+    const lotPoly = [inner1, outer1, outer2, inner2];
     const area = polygonArea(lotPoly);
+
     lots.push({
       polygon: lotPoly,
       area: area,
       number: lotNumStart + i,
-      compliant: area >= params.minLotArea,
+      compliant: area >= minArea,
       width: rowRadius * angleStep,
-      depth: lotDepth,
+      depth: depth,
       isCdsLot: true
     });
   }
