@@ -5340,7 +5340,17 @@ function placeStreetPoint(worldX, worldY) {
     return;
   }
   const a = state.streetStartPt;
-  const b = { x: worldX, y: worldY };
+  // Default: constrain to N/S or E/W (snap to nearest cardinal axis)
+  // Hold Shift when clicking end point to allow free angle
+  let b;
+  const rawDx = worldX - a.x, rawDy = worldY - a.y;
+  if (Math.abs(rawDx) > Math.abs(rawDy)) {
+    // More horizontal — snap to E/W (same Y)
+    b = { x: worldX, y: a.y };
+  } else {
+    // More vertical — snap to N/S (same X)
+    b = { x: a.x, y: worldY };
+  }
   const dx = b.x-a.x, dy = b.y-a.y;
   const len = Math.sqrt(dx*dx+dy*dy) || 1;
   const nx = -dy/len, ny = dx/len;
