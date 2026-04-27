@@ -1938,6 +1938,7 @@ function render() {
   drawStreets();
   drawLots();
   if (typeof drawBasins === 'function') drawBasins();
+  if (typeof drawCdsLimitLines === 'function') drawCdsLimitLines();
   drawBoundary();
   drawAnnotations();
   if (typeof drawMetesHighlight === 'function') drawMetesHighlight();
@@ -5453,16 +5454,106 @@ function placeCdsAt(worldX, worldY) {
   document.getElementById('btnPlaceCds').textContent = 'Place Cul-de-sac';
   render();
 
-  if (cdsLots.length === 0) {
-    document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — 0 lots. Enable Edit Mode and drag it away from boundary.';
-    showToast('0 radial lots — too close to boundary. Enable Edit Mode → drag cul-de-sac inward.', 'warning');
-  } else if (cdsLots.length < 5) {
-    document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — ' + cdsLots.length + ' lots. Drag to adjust fit.';
-    showToast(cdsLots.length + ' radial lots — drag cul-de-sac east/west to improve fit', 'warning');
-  } else {
-    document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — ' + cdsLots.length + ' radial lots';
-    showToast('Cul-de-sac placed with ' + cdsLots.length + ' radial lots', 'success');
+  // Prompt user to draw a limit line for the radial lots
+  state.drawingCdsLimit = true;
+  state.cdsLimitTarget = state.culdesacs.length - 1; // index of CDS just placed
+  state.cdsLimitPt1 = null;
+  document.getElementById('canvas-hint').textContent = 'Now click 2 points to draw a LIMIT LINE across the rear of the CDS lots (or press Esc to skip)';
+  showToast(cdsLots.length + ' radial lots — draw a limit line for rear lot lines', 'info');
+}
+
+// Handle limit line clicks for CDS
+function handleCdsLimitClick(wx, wy) {
+  if (!state.cdsLimitPt1) {
+    state.cdsLimitPt1 = { x: wx, y: wy };
+    document.getElementById('canvas-hint').textContent = 'Click second point of limit line';
+    render();
+    return;
   }
+
+  const p1 = state.cdsLimitPt1;
+  const p2 = { x: wx, y: wy };
+  const cdsIdx = state.cdsLimitTarget;
+  const cds = state.culdesacs[cdsIdx];
+  const params = getDesignParams();
+
+  // Trim/extend all CDS radial lots to intersect the limit line
+  // The limit line is defined by p1→p2
+  const ldx = p2.x - p1.x, ldy = p2.y - p1.y;
+  const llen = Math.sqrt(ldx*ldx + ldy*ldy) || 1;
+  const lux = ldx/llen, luy = ldy/llen;
+  const lnx = -luy, lny = lux; // normal to limit line
+
+  // Rebuild CDS lots: inner edge stays on CDS ROW, outer edge projects to limit line
+  const newLots = [];
+  const cdsLots = state.lots.filter(l => l.isCdsLot);
+  const otherLots = state.lots.filter(l => !l.isCdsLot);
+
+  for (const lot of cdsLots) {
+    // Check this lot belongs to the current CDS (near its center)
+    const lotCx = lot.polygon.reduce((s,p)=>s+p.x,0)/lot.polygon.length;
+    const lotCy = lot.polygon.reduce((s,p)=>s+p.y,0)/lot.polygon.length;
+    if (Math.hypot(lotCx - cds.center.x, lotCy - cds.center.y) > cds.rowRadius + params.minLotDepth + 50) {
+      newLots.push(lot); // not this CDS's lot, keep as-is
+      continue;
+    }
+
+    // Inner edge = polygon[0] and polygon[3] (on CDS ROW circle)
+    const inner1 = lot.polygon[0];
+    const inner2 = lot.polygon[lot.polygon.length - 1];
+
+    // Project each inner point outward (radially from CDS center) to the limit line
+    const outer1 = projectPointToLine(inner1, cds.center, p1, p2);
+    const outer2 = projectPointToLine(inner2, cds.center, p1, p2);
+
+    if (!outer1 || !outer2) {
+      newLots.push(lot); // can't project, keep original
+      continue;
+    }
+
+    const newPoly = [inner1, outer1, outer2, inner2];
+    const area = polygonArea(newPoly);
+    const criteria = getLotCriteriaAt(lotCx, lotCy, params);
+
+    newLots.push({
+      polygon: newPoly, area,
+      number: lot.number,
+      compliant: area >= (criteria.minLotArea || params.minLotArea),
+      minAreaRequired: criteria.minLotArea || params.minLotArea,
+      isCdsLot: true
+    });
+  }
+
+  state.lots = [...otherLots, ...newLots];
+  state.lots.forEach((l,i) => l.number = i+1);
+
+  // Store limit line for rendering
+  state.cdsLimitLines = state.cdsLimitLines || [];
+  state.cdsLimitLines.push([p1, p2]);
+
+  state.drawingCdsLimit = false;
+  state.cdsLimitPt1 = null;
+  render();
+  showToast('Limit line applied — rear lot lines squared off', 'success');
+  document.getElementById('canvas-hint').textContent = 'CDS lots trimmed to limit line';
+}
+
+// Project a point radially from center onto a line defined by lineA→lineB
+function projectPointToLine(pt, center, lineA, lineB) {
+  // Ray from center through pt
+  const rdx = pt.x - center.x, rdy = pt.y - center.y;
+  const rlen = Math.sqrt(rdx*rdx + rdy*rdy) || 1;
+
+  // Extend ray far out
+  const farPt = { x: center.x + (rdx/rlen) * 5000, y: center.y + (rdy/rlen) * 5000 };
+
+  // Intersect ray with the limit line
+  const ix = segSegIntersect(center, farPt, lineA, lineB);
+  if (ix) return ix;
+
+  // If no intersection with segment, try infinite line
+  const lix = lineLineIntersect(center, farPt, lineA, lineB);
+  return lix;
 }
 
 // -- Place Knuckle: click at intersection --
@@ -5695,6 +5786,10 @@ function convexHull(points) {
 state.basins = [];
 state.placingBasin = false;
 state.basinFirstPt = null;
+state.drawingCdsLimit = false;
+state.cdsLimitTarget = -1;
+state.cdsLimitPt1 = null;
+state.cdsLimitLines = [];
 
 function startPlaceBasin() {
   state.placingBasin = true;
@@ -5779,6 +5874,31 @@ function placeBasinPoint(worldX, worldY) {
     (calcVolume >= volume ? ' (meets target)' : ' (UNDER target ' + volume.toLocaleString() + ' cf)') +
     ' | ' + lotsRemoved + ' lots removed',
     calcVolume >= volume ? 'success' : 'warning');
+}
+
+// Draw CDS limit lines
+function drawCdsLimitLines() {
+  if (!state.cdsLimitLines) return;
+  for (const seg of state.cdsLimitLines) {
+    const [sx1, sy1] = worldToScreen(seg[0].x, seg[0].y);
+    const [sx2, sy2] = worldToScreen(seg[1].x, seg[1].y);
+    ctx.strokeStyle = 'rgba(255, 150, 0, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 4]);
+    ctx.beginPath();
+    ctx.moveTo(sx1, sy1);
+    ctx.lineTo(sx2, sy2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Draw in-progress limit line first point
+  if (state.drawingCdsLimit && state.cdsLimitPt1) {
+    const [px, py] = worldToScreen(state.cdsLimitPt1.x, state.cdsLimitPt1.y);
+    ctx.fillStyle = 'rgba(255, 150, 0, 0.9)';
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI*2);
+    ctx.fill();
+  }
 }
 
 // Draw retention basins
@@ -7026,6 +7146,7 @@ canvas.addEventListener('click', function(e) {
   if (state.placingCds) { placeCdsAt(wx, wy); return; }
   if (state.placingKnuckle) { placeKnuckleAt(wx, wy); return; }
   if (state.placingBasin) { placeBasinPoint(wx, wy); return; }
+  if (state.drawingCdsLimit) { handleCdsLimitClick(wx, wy); return; }
   if (state.mergingLots) { handleMergeClick(wx, wy); return; }
   if (state.deletingLot) { handleDeleteLineClick(wx, wy); return; }
 
