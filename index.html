@@ -1489,6 +1489,10 @@ input[type="range"]::-moz-range-thumb {
           <button class="btn" onclick="startMergeLots()" id="btnMergeLots">Merge Lots</button>
           <button class="btn" onclick="startDeleteLine()" id="btnDeleteLine">Delete Line</button>
         </div>
+        <div class="btn-group" style="margin-top:4px;">
+          <button class="btn" onclick="startCdsLimit()" id="btnCdsLimit">CDS Limit</button>
+          <button class="btn" onclick="startPlaceKnuckle()" id="btnPlaceKnuckle">Place Knuckle</button>
+        </div>
 
         <hr class="param-divider" />
 
@@ -5533,15 +5537,24 @@ function placeCdsAt(worldX, worldY) {
   document.getElementById('btnPlaceCds').textContent = 'Place Cul-de-sac';
   render();
 
-  // Prompt user to draw a limit line for the radial lots
-  state.drawingCdsLimit = true;
-  state.cdsLimitTarget = state.culdesacs.length - 1; // index of CDS just placed
-  state.cdsLimitPt1 = null;
-  document.getElementById('canvas-hint').textContent = 'Click 4 points to draw 3 LIMIT LINES around the rear of the CDS lots (or click another tool to skip)';
-  showToast(cdsLots.length + ' radial lots — draw a limit line for rear lot lines', 'info');
+  // Don't auto-start limit line — user can click "CDS Limit" button when ready
+  showToast(cdsLots.length + ' radial lots. Use "CDS Limit" to draw rear lot lines, or Edit Mode to drag.', 'info');
+  document.getElementById('canvas-hint').textContent = cdsLots.length + ' radial lots — drag CDS in Edit Mode or click CDS Limit to trim';
 }
 
 // Handle limit line clicks for CDS
+function startCdsLimit() {
+  if (state.culdesacs.length === 0) {
+    showToast('Place a cul-de-sac first', 'warning');
+    return;
+  }
+  state.drawingCdsLimit = true;
+  state.cdsLimitTarget = state.culdesacs.length - 1;
+  state.cdsLimitPts = null;
+  document.getElementById('btnCdsLimit').textContent = 'Click 4 points...';
+  document.getElementById('canvas-hint').textContent = 'Click 4 points to draw 3 limit lines around rear of CDS lots';
+}
+
 function handleCdsLimitClick(wx, wy) {
   if (!state.cdsLimitPts) state.cdsLimitPts = [];
   state.cdsLimitPts.push({ x: wx, y: wy });
