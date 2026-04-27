@@ -1450,7 +1450,35 @@ input[type="range"]::-moz-range-thumb {
         </div>
         <div class="btn-group" style="margin-top:4px;">
           <button class="btn" onclick="startPlaceCds()" id="btnPlaceCds">Place Cul-de-sac</button>
-          <button class="btn" onclick="startPlaceKnuckle()" id="btnPlaceKnuckle">Place Knuckle</button>
+          <button class="btn" onclick="startPlaceBasin()" id="btnPlaceBasin">Place Basin</button>
+        </div>
+
+        <hr class="param-divider" />
+
+        <div class="param-group-label">Retention Basin</div>
+        <div class="form-row-inline">
+          <div>
+            <label>Volume (cf)</label>
+            <input type="number" id="basinVolume" value="50000" min="1000" step="1000" />
+          </div>
+          <div>
+            <label>Side Slopes</label>
+            <select id="basinSlope">
+              <option value="3">3:1</option>
+              <option value="4" selected>4:1</option>
+              <option value="5">5:1</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label>Max Depth (ft)</label>
+            <input type="number" id="basinDepth" value="6" min="1" max="20" step="0.5" />
+          </div>
+          <div>
+            <label>Freeboard (ft)</label>
+            <input type="number" id="basinFreeboard" value="1" min="0" max="3" step="0.5" />
+          </div>
         </div>
 
         <hr class="param-divider" />
@@ -1905,6 +1933,7 @@ function render() {
   drawBufferedBoundary();
   drawStreets();
   drawLots();
+  if (typeof drawBasins === 'function') drawBasins();
   drawBoundary();
   drawAnnotations();
   if (typeof drawMetesHighlight === 'function') drawMetesHighlight();
@@ -5440,6 +5469,151 @@ function placeKnuckleAt(worldX, worldY) {
   showToast('Knuckle placed', 'success');
 }
 
+// ============================================
+// RETENTION BASIN
+// ============================================
+state.basins = [];
+state.placingBasin = false;
+state.basinFirstPt = null;
+
+function startPlaceBasin() {
+  state.placingBasin = true;
+  state.basinFirstPt = null;
+  state.placingEntry = false;
+  state.placingStreet = false;
+  state.placingCds = false;
+  state.placingKnuckle = false;
+  document.getElementById('btnPlaceBasin').textContent = 'Click corner 1...';
+  document.getElementById('canvas-hint').textContent = 'Click two opposite corners to define the retention basin area';
+}
+
+function placeBasinPoint(worldX, worldY) {
+  if (!state.basinFirstPt) {
+    state.basinFirstPt = { x: worldX, y: worldY };
+    document.getElementById('btnPlaceBasin').textContent = 'Click corner 2...';
+    document.getElementById('canvas-hint').textContent = 'Click the opposite corner of the basin';
+    return;
+  }
+
+  const p1 = state.basinFirstPt;
+  const p2 = { x: worldX, y: worldY };
+  const params = getDesignParams();
+
+  // Basin parameters
+  const volume = parseFloat((document.getElementById('basinVolume')||{}).value) || 50000;
+  const sideSlope = parseFloat((document.getElementById('basinSlope')||{}).value) || 4;
+  const maxDepth = parseFloat((document.getElementById('basinDepth')||{}).value) || 6;
+  const freeboard = parseFloat((document.getElementById('basinFreeboard')||{}).value) || 1;
+
+  // Basin rectangle (top of bank)
+  const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+  const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+  const topW = maxX - minX, topL = maxY - minY;
+
+  // Toe of slope (bottom of basin)
+  const toeOffset = sideSlope * maxDepth;
+  const botW = Math.max(0, topW - 2 * toeOffset);
+  const botL = Math.max(0, topL - 2 * toeOffset);
+
+  // Calculate volume using prismoidal formula
+  const topArea = topW * topL;
+  const botArea = botW * botL;
+  const midW = (topW + botW) / 2, midL = (topL + botL) / 2;
+  const midArea = midW * midL;
+  const calcVolume = (maxDepth / 6) * (topArea + 4 * midArea + botArea);
+
+  const basin = {
+    topPoly: [
+      { x: minX, y: minY }, { x: maxX, y: minY },
+      { x: maxX, y: maxY }, { x: minX, y: maxY }
+    ],
+    toePoly: [
+      { x: minX + toeOffset, y: minY + toeOffset },
+      { x: maxX - toeOffset, y: minY + toeOffset },
+      { x: maxX - toeOffset, y: maxY - toeOffset },
+      { x: minX + toeOffset, y: maxY - toeOffset }
+    ],
+    center: { x: (minX+maxX)/2, y: (minY+maxY)/2 },
+    topWidth: topW, topLength: topL,
+    depth: maxDepth, freeboard,
+    sideSlope, volume: calcVolume,
+    targetVolume: volume
+  };
+  state.basins.push(basin);
+
+  // Remove lots that fall inside the basin area
+  const removedCount = state.lots.length;
+  state.lots = state.lots.filter(lot => {
+    const cx = lot.polygon.reduce((s,p) => s+p.x, 0) / lot.polygon.length;
+    const cy = lot.polygon.reduce((s,p) => s+p.y, 0) / lot.polygon.length;
+    return !(cx >= minX && cx <= maxX && cy >= minY && cy <= maxY);
+  });
+  const lotsRemoved = removedCount - state.lots.length;
+
+  state.placingBasin = false;
+  state.basinFirstPt = null;
+  document.getElementById('btnPlaceBasin').textContent = 'Place Basin';
+  document.getElementById('canvas-hint').textContent = 'Basin placed';
+  render();
+  showToast('Basin: ' + Math.round(calcVolume).toLocaleString() + ' cf' +
+    (calcVolume >= volume ? ' (meets target)' : ' (UNDER target ' + volume.toLocaleString() + ' cf)') +
+    ' | ' + lotsRemoved + ' lots removed',
+    calcVolume >= volume ? 'success' : 'warning');
+}
+
+// Draw retention basins
+function drawBasins() {
+  for (const b of state.basins) {
+    // Top of bank — solid blue-green line
+    ctx.beginPath();
+    const [t0x, t0y] = worldToScreen(b.topPoly[0].x, b.topPoly[0].y);
+    ctx.moveTo(t0x, t0y);
+    for (let i = 1; i < b.topPoly.length; i++) {
+      const [tx, ty] = worldToScreen(b.topPoly[i].x, b.topPoly[i].y);
+      ctx.lineTo(tx, ty);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0, 150, 200, 0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 150, 200, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Toe of slope — dashed inner line
+    if (b.toePoly[0]) {
+      ctx.beginPath();
+      const [b0x, b0y] = worldToScreen(b.toePoly[0].x, b.toePoly[0].y);
+      ctx.moveTo(b0x, b0y);
+      for (let i = 1; i < b.toePoly.length; i++) {
+        const [bx, by] = worldToScreen(b.toePoly[i].x, b.toePoly[i].y);
+        ctx.lineTo(bx, by);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(0, 150, 200, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Labels
+    const [cx, cy] = worldToScreen(b.center.x, b.center.y);
+    ctx.font = 'bold 10px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.9)';
+    ctx.fillText('RETENTION BASIN', cx, cy - 16);
+    ctx.font = '9px Consolas, monospace';
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.7)';
+    ctx.fillText(Math.round(b.volume).toLocaleString() + ' cf', cx, cy);
+    ctx.fillText(b.topWidth.toFixed(0) + "' x " + b.topLength.toFixed(0) + "' x " + b.depth + "' deep", cx, cy + 12);
+    ctx.fillText(b.sideSlope + ':1 slopes', cx, cy + 24);
+    if (b.volume < b.targetVolume) {
+      ctx.fillStyle = 'rgba(244, 67, 54, 0.9)';
+      ctx.fillText('UNDER TARGET: ' + b.targetVolume.toLocaleString() + ' cf', cx, cy + 38);
+    }
+  }
+}
+
 // -- Edit Mode: select and drag streets --
 function toggleEditMode(enabled) {
   state.editMode = enabled;
@@ -6591,6 +6765,7 @@ canvas.addEventListener('click', function(e) {
   if (state.placingStreet) { [wx, wy] = snapToGrid(wx, wy); placeStreetPoint(wx, wy); return; }
   if (state.placingCds) { placeCdsAt(wx, wy); return; }
   if (state.placingKnuckle) { placeKnuckleAt(wx, wy); return; }
+  if (state.placingBasin) { placeBasinPoint(wx, wy); return; }
 
   // Edit mode: select street
   if (state.editMode) {
