@@ -5646,6 +5646,45 @@ function findNearestStreet(worldX, worldY, threshold) {
   return best;
 }
 
+// Snap both endpoints of a street to the nearest point on any other street
+function snapStreetToNearest(idx) {
+  const st = state.streets[idx];
+  const params = getDesignParams();
+  const halfROW = params.rowWidth / 2;
+  const snapThreshold = 80; // snap if within 80'
+
+  for (const endIdx of [0, 1]) {
+    const pt = st.centerline[endIdx];
+    let bestDist = snapThreshold, bestPt = null;
+
+    for (let j = 0; j < state.streets.length; j++) {
+      if (j === idx) continue;
+      const [a, b] = state.streets[j].centerline;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const t = Math.max(0, Math.min(1, ((pt.x-a.x)*dx + (pt.y-a.y)*dy) / (len*len)));
+      const projX = a.x + t*dx, projY = a.y + t*dy;
+      const d = Math.hypot(pt.x - projX, pt.y - projY);
+      if (d < bestDist) {
+        bestDist = d;
+        bestPt = { x: projX, y: projY };
+      }
+    }
+
+    if (bestPt) {
+      // Move this endpoint to the snap point
+      const dx = bestPt.x - pt.x, dy = bestPt.y - pt.y;
+      pt.x = bestPt.x;
+      pt.y = bestPt.y;
+      // Also move corresponding ROW endpoint
+      st.rowLeft[endIdx].x += dx;
+      st.rowLeft[endIdx].y += dy;
+      st.rowRight[endIdx].x += dx;
+      st.rowRight[endIdx].y += dy;
+    }
+  }
+}
+
 function moveStreet(idx, dx, dy) {
   const st = state.streets[idx];
   for (const pt of st.centerline) { pt.x += dx; pt.y += dy; }
@@ -6960,9 +6999,24 @@ canvas.addEventListener('mouseup', function(e) {
   if (state.draggingCds) {
     state.draggingCds = false;
     canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
+    // Regenerate radial lots at new position
+    const cds = state.culdesacs[state.selectedCds];
+    const params = getDesignParams();
+    // Remove any existing lots near the old or new CDS position
+    state.lots = state.lots.filter(lot => {
+      const cx = lot.polygon.reduce((s,p) => s+p.x,0) / lot.polygon.length;
+      const cy = lot.polygon.reduce((s,p) => s+p.y,0) / lot.polygon.length;
+      return Math.hypot(cx - cds.center.x, cy - cds.center.y) > cds.rowRadius + params.minLotDepth + 10;
+    });
+    // Generate fresh radial lots
+    const newLots = generateCulDeSacLots(
+      cds.center, cds.rowRadius, params.minLotDepth,
+      params.minLotWidth, state.lots.length + 1, params, state.vertices
+    );
+    state.lots.push(...newLots);
     cleanupPerimeterLots();
-    regenerateLots();
-    showToast('Cul-de-sac moved — lots updated', 'info');
+    render();
+    showToast('Cul-de-sac moved — ' + newLots.length + ' radial lots regenerated', 'info');
   }
   if (state.draggingKnuckle) {
     state.draggingKnuckle = false;
@@ -6973,8 +7027,13 @@ canvas.addEventListener('mouseup', function(e) {
   if (state.draggingStreet) {
     state.draggingStreet = false;
     canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
+    // Snap street endpoints to nearest other street
+    if (state.selectedStreet >= 0) {
+      snapStreetToNearest(state.selectedStreet);
+    }
+    cleanupPerimeterLots();
     regenerateLots();
-    showToast('Street moved — lots regenerated', 'info');
+    showToast('Street moved — snapped & lots regenerated', 'info');
   }
   if (state.bendingStreet) {
     state.bendingStreet = false;
