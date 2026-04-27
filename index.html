@@ -1733,6 +1733,7 @@ input[type="range"]::-moz-range-thumb {
       <button onclick="zoomIn()" title="Zoom In">+</button>
       <button onclick="zoomOut()" title="Zoom Out">&minus;</button>
       <button onclick="zoomToFit()" title="Zoom to Fit">&#8644;</button>
+      <button onclick="togglePanMode()" id="btnPanMode" title="Pan Mode (hold Space)">&#9995;</button>
       <button onclick="undoAction()" title="Undo (Ctrl+Z)">&#8617;</button>
     </div>
 
@@ -2821,9 +2822,9 @@ canvas.addEventListener('dblclick', e => {
   closePolygon();
 });
 
-// Pan with middle mouse or right-click drag
+// Pan with middle mouse, right-click drag, pan mode, or Space+drag
 canvas.addEventListener('mousedown', e => {
-  if (e.button === 1 || e.button === 2) {
+  if (e.button === 1 || e.button === 2 || ((state.panMode || state.spaceHeld) && e.button === 0)) {
     e.preventDefault();
     state.isPanning = true;
     canvas.style.cursor = 'grabbing';
@@ -2831,9 +2832,9 @@ canvas.addEventListener('mousedown', e => {
 });
 
 canvas.addEventListener('mouseup', e => {
-  if (e.button === 1 || e.button === 2) {
+  if (state.isPanning) {
     state.isPanning = false;
-    canvas.style.cursor = 'crosshair';
+    canvas.style.cursor = state.panMode ? 'grab' : 'crosshair';
   }
 });
 
@@ -2852,6 +2853,25 @@ canvas.addEventListener('wheel', e => {
 // ============================================
 // VIEW CONTROLS
 // ============================================
+state.panMode = false;
+state.spaceHeld = false;
+
+function togglePanMode() {
+  state.panMode = !state.panMode;
+  const btn = document.getElementById('btnPanMode');
+  if (state.panMode) {
+    btn.style.borderColor = 'var(--color-accent)';
+    btn.style.color = 'var(--color-accent)';
+    canvas.style.cursor = 'grab';
+    document.getElementById('canvas-hint').textContent = 'Pan mode — drag to move. Click pan button again to exit.';
+  } else {
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    canvas.style.cursor = 'crosshair';
+    document.getElementById('canvas-hint').textContent = 'Pan mode off';
+  }
+}
+
 function zoomIn() {
   state.zoom = Math.min(10, state.zoom * 1.3);
   document.getElementById('zoomSlider').value = state.zoom;
@@ -5934,6 +5954,18 @@ document.addEventListener('keydown', function(e) {
     state.streetStartPt = null;
     document.getElementById('canvas-hint').textContent = 'Action cancelled';
     render();
+  }
+  // Space = temporary pan
+  if (e.key === ' ' && !state.spaceHeld) {
+    e.preventDefault();
+    state.spaceHeld = true;
+    canvas.style.cursor = 'grab';
+  }
+});
+document.addEventListener('keyup', function(e) {
+  if (e.key === ' ') {
+    state.spaceHeld = false;
+    if (!state.panMode) canvas.style.cursor = 'crosshair';
   }
 });
 state.placingBasin = false;
