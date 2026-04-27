@@ -1454,7 +1454,7 @@ input[type="range"]::-moz-range-thumb {
         </div>
         <div class="btn-group" style="margin-top:4px;">
           <button class="btn" onclick="startMergeLots()" id="btnMergeLots">Merge Lots</button>
-          <button class="btn" onclick="startDeleteLot()" id="btnDeleteLot">Delete Lot</button>
+          <button class="btn" onclick="startDeleteLine()" id="btnDeleteLine">Delete Line</button>
         </div>
 
         <hr class="param-divider" />
@@ -5507,10 +5507,10 @@ function startMergeLots() {
   document.getElementById('canvas-hint').textContent = 'Click on a lot to start merge, then click adjacent lot to combine';
 }
 
-function startDeleteLot() {
+function startDeleteLine() {
   state.deletingLot = true;
   state.mergingLots = false;
-  document.getElementById('btnDeleteLot').textContent = 'Click a line...';
+  document.getElementById('btnDeleteLine').textContent = 'Click a line...';
   document.getElementById('canvas-hint').textContent = 'Click on any lot line to delete it — adjacent lots will merge';
 }
 
@@ -5666,7 +5666,7 @@ function handleDeleteLineClick(wx, wy) {
   }
 
   // Stay in delete line mode for more clicks
-  document.getElementById('canvas-hint').textContent = 'Click another line or click Delete Lot button again to exit';
+  document.getElementById('canvas-hint').textContent = 'Click another line to delete, or click Delete Line to exit';
 }
 
 // Simple convex hull (Graham scan)
