@@ -5461,9 +5461,18 @@ function placeCdsAt(worldX, worldY) {
 
   state.placingCds = false;
   document.getElementById('btnPlaceCds').textContent = 'Place Cul-de-sac';
-  document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — ' + cdsLots.length + ' radial lots';
   render();
-  showToast('Cul-de-sac placed with ' + cdsLots.length + ' radial lots', 'success');
+
+  if (cdsLots.length === 0) {
+    document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — 0 lots. Enable Edit Mode and drag it away from boundary.';
+    showToast('0 radial lots — too close to boundary. Enable Edit Mode → drag cul-de-sac inward.', 'warning');
+  } else if (cdsLots.length < 5) {
+    document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — ' + cdsLots.length + ' lots. Drag to adjust fit.';
+    showToast(cdsLots.length + ' radial lots — drag cul-de-sac east/west to improve fit', 'warning');
+  } else {
+    document.getElementById('canvas-hint').textContent = 'Cul-de-sac placed — ' + cdsLots.length + ' radial lots';
+    showToast('Cul-de-sac placed with ' + cdsLots.length + ' radial lots', 'success');
+  }
 }
 
 // -- Place Knuckle: click at intersection --
