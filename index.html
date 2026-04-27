@@ -3688,29 +3688,32 @@ function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumSt
       { x: center.x + Math.cos(a2) * rowRadius, y: center.y + Math.sin(a2) * rowRadius }
     ];
 
-    // Centroid check — must be inside boundary
+    // Check inner edge is inside boundary (not centroid — centroid is too far out)
+    const innerCx = (lotPoly[0].x + lotPoly[3].x) / 2;
+    const innerCy = (lotPoly[0].y + lotPoly[3].y) / 2;
+    // At least the inner edge midpoint should be inside
+    if (!pointInPolygon({ x: innerCx, y: innerCy }, buffer)) {
+      // Try with smaller depth
+      const smallR = rowRadius + radialDepth * 0.5;
+      const smallPoly = [
+        lotPoly[0],
+        { x: center.x + Math.cos(a1) * smallR, y: center.y + Math.sin(a1) * smallR },
+        { x: center.x + Math.cos(a2) * smallR, y: center.y + Math.sin(a2) * smallR },
+        lotPoly[3]
+      ];
+      const sCx = (smallPoly[0].x+smallPoly[1].x+smallPoly[2].x+smallPoly[3].x)/4;
+      const sCy = (smallPoly[0].y+smallPoly[1].y+smallPoly[2].y+smallPoly[3].y)/4;
+      if (!pointInPolygon({ x: sCx, y: sCy }, buffer)) continue;
+      // Use smaller lot
+      lotPoly[1] = smallPoly[1];
+      lotPoly[2] = smallPoly[2];
+    }
+
     const lotCx = (lotPoly[0].x+lotPoly[1].x+lotPoly[2].x+lotPoly[3].x)/4;
     const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
-    if (!pointInPolygon({ x: lotCx, y: lotCy }, buffer)) continue;
-
-    // Skip lots that overlap with streets (but NOT the connecting street or perimeter)
-    let overlaps = false;
-    for (const st of state.streets) {
-      if (st.isPerimeter) continue; // don't reject lots near perimeter road
-      const [sa, sb] = st.centerline;
-      // Skip the street that connects to this CDS (within 2x radius)
-      const stMx = (sa.x+sb.x)/2, stMy = (sa.y+sb.y)/2;
-      if (Math.hypot(stMx - center.x, stMy - center.y) < rowRadius * 3) continue;
-      const sdx = sb.x-sa.x, sdy = sb.y-sa.y;
-      const slen = Math.sqrt(sdx*sdx+sdy*sdy) || 1;
-      const t = Math.max(0, Math.min(1, ((lotCx-sa.x)*sdx+(lotCy-sa.y)*sdy)/(slen*slen)));
-      const px = sa.x+t*sdx, py = sa.y+t*sdy;
-      if (Math.hypot(lotCx-px, lotCy-py) < params.rowWidth * 0.8) { overlaps = true; break; }
-    }
-    if (overlaps) continue;
 
     const area = polygonArea(lotPoly);
-    if (area < 500) continue;
+    if (area < 200) continue;
 
     lots.push({
       polygon: lotPoly,
