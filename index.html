@@ -1502,6 +1502,7 @@ input[type="range"]::-moz-range-thumb {
 
         <hr class="param-divider" />
 
+        <button class="btn" onclick="undoAction()" style="margin-top:6px; border-color:var(--color-warning); color:var(--color-warning);">Undo (Ctrl+Z)</button>
         <button class="btn" onclick="regenerateLots()" style="margin-top:6px;">Regenerate Lots</button>
         <button class="btn" onclick="clearLayout()" style="margin-top:6px;">Clear Layout Only</button>
       </div>
@@ -5223,6 +5224,7 @@ function startPlaceEntry() {
 }
 
 function placeEntryAt(worldX, worldY) {
+  saveUndo();
   const params = getDesignParams();
   const halfROW = params.rowWidth / 2;
   // Find nearest boundary edge
@@ -5331,6 +5333,7 @@ function startPlaceStreet() {
 }
 
 function placeStreetPoint(worldX, worldY) {
+  if (state.streetStartPt) saveUndo(); // save before placing end point
   const params = getDesignParams();
   const halfROW = params.rowWidth / 2;
   if (!state.streetStartPt) {
@@ -5393,6 +5396,7 @@ function startPlaceCds() {
 }
 
 function placeCdsAt(worldX, worldY) {
+  saveUndo();
   const params = getDesignParams();
 
   // Find nearest street endpoint — snap CDS to it and align with street direction
@@ -5635,6 +5639,7 @@ function findLotAtPoint(wx, wy) {
 }
 
 function handleMergeClick(wx, wy) {
+  if (state.mergeFirstLot >= 0) saveUndo(); // save before second click merges
   const idx = findLotAtPoint(wx, wy);
   if (idx < 0) { showToast('No lot at that location', 'warning'); return; }
 
@@ -5696,6 +5701,7 @@ function handleMergeClick(wx, wy) {
 }
 
 function handleDeleteLineClick(wx, wy) {
+  saveUndo();
   const params = getDesignParams();
   const threshold = state.scale * 15 / state.zoom;
 
@@ -5806,6 +5812,75 @@ function convexHull(points) {
 // RETENTION BASIN
 // ============================================
 state.basins = [];
+state.undoStack = [];
+
+// Save current state for undo (call before any action)
+function saveUndo() {
+  const snap = {
+    lots: JSON.parse(JSON.stringify(state.lots)),
+    streets: state.streets.map(s => ({
+      centerline: [{x:s.centerline[0].x,y:s.centerline[0].y},{x:s.centerline[1].x,y:s.centerline[1].y}],
+      rowLeft: s.rowLeft.map(p => ({x:p.x,y:p.y})),
+      rowRight: s.rowRight.map(p => ({x:p.x,y:p.y})),
+      isPrimary: s.isPrimary, _name: s._name, isManual: s.isManual,
+      isEntry: s.isEntry, isPerimeter: s.isPerimeter, isCurved: s.isCurved,
+      bendPt: s.bendPt ? {x:s.bendPt.x,y:s.bendPt.y} : null
+    })),
+    culdesacs: JSON.parse(JSON.stringify(state.culdesacs)),
+    knuckles: JSON.parse(JSON.stringify(state.knuckles)),
+    basins: JSON.parse(JSON.stringify(state.basins)),
+    manualStreets: state.manualStreets.length,
+    manualEntries: state.manualEntries.length
+  };
+  state.undoStack.push(snap);
+  if (state.undoStack.length > 30) state.undoStack.shift(); // keep max 30
+}
+
+function undoAction() {
+  if (state.undoStack.length === 0) {
+    showToast('Nothing to undo', 'warning');
+    return;
+  }
+  const snap = state.undoStack.pop();
+  state.lots = snap.lots;
+  state.streets = snap.streets;
+  state.culdesacs = snap.culdesacs;
+  state.knuckles = snap.knuckles;
+  state.basins = snap.basins;
+  // Reset placement modes
+  state.placingEntry = false;
+  state.placingStreet = false;
+  state.placingCds = false;
+  state.placingBasin = false;
+  state.mergingLots = false;
+  state.deletingLot = false;
+  state.drawingCdsLimit = false;
+  state.streetStartPt = null;
+  updateYieldSummary(getDesignParams());
+  render();
+  showToast('Undone (' + state.undoStack.length + ' steps remaining)', 'info');
+}
+
+// Keyboard shortcut: Ctrl+Z
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    e.preventDefault();
+    undoAction();
+  }
+  // Escape cancels current placement mode
+  if (e.key === 'Escape') {
+    state.placingEntry = false;
+    state.placingStreet = false;
+    state.placingCds = false;
+    state.placingBasin = false;
+    state.mergingLots = false;
+    state.deletingLot = false;
+    state.drawingCdsLimit = false;
+    state.streetStartPt = null;
+    document.getElementById('canvas-hint').textContent = 'Action cancelled';
+    render();
+  }
+});
 state.placingBasin = false;
 state.basinFirstPt = null;
 state.drawingCdsLimit = false;
@@ -5825,6 +5900,7 @@ function startPlaceBasin() {
 }
 
 function placeBasinPoint(worldX, worldY) {
+  if (state.basinFirstPt) saveUndo(); // save before second click creates basin
   if (!state.basinFirstPt) {
     state.basinFirstPt = { x: worldX, y: worldY };
     document.getElementById('btnPlaceBasin').textContent = 'Click corner 2...';
