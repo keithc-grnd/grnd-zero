@@ -3671,54 +3671,26 @@ function longestAxis(poly) {
 // Generate cul-de-sac lots radially around a center point
 function generateCulDeSacLots(center, rowRadius, lotDepth, minLotWidth, lotNumStart, params, buffer) {
   const lots = [];
-  // Radial lot depth — use lotDepth but cap so lots don't extend too far
-  const radialDepth = Math.min(lotDepth, 100);
-  const outerR = rowRadius + radialDepth;
+  const outerR = rowRadius + lotDepth;
   const circumference = 2 * Math.PI * rowRadius;
   const numLots = Math.max(5, Math.floor(circumference / minLotWidth));
   const angleStep = (2 * Math.PI) / numLots;
 
+  // Generate ALL radial lots — no filtering, no checks
   for (let i = 0; i < numLots; i++) {
-    const a1 = i * angleStep - Math.PI / 2;
-    const a2 = (i + 1) * angleStep - Math.PI / 2;
+    const a1 = i * angleStep;
+    const a2 = (i + 1) * angleStep;
     const lotPoly = [
       { x: center.x + Math.cos(a1) * rowRadius, y: center.y + Math.sin(a1) * rowRadius },
       { x: center.x + Math.cos(a1) * outerR, y: center.y + Math.sin(a1) * outerR },
       { x: center.x + Math.cos(a2) * outerR, y: center.y + Math.sin(a2) * outerR },
       { x: center.x + Math.cos(a2) * rowRadius, y: center.y + Math.sin(a2) * rowRadius }
     ];
-
-    // Check inner edge is inside boundary (not centroid — centroid is too far out)
-    const innerCx = (lotPoly[0].x + lotPoly[3].x) / 2;
-    const innerCy = (lotPoly[0].y + lotPoly[3].y) / 2;
-    // At least the inner edge midpoint should be inside
-    if (!pointInPolygon({ x: innerCx, y: innerCy }, buffer)) {
-      // Try with smaller depth
-      const smallR = rowRadius + radialDepth * 0.5;
-      const smallPoly = [
-        lotPoly[0],
-        { x: center.x + Math.cos(a1) * smallR, y: center.y + Math.sin(a1) * smallR },
-        { x: center.x + Math.cos(a2) * smallR, y: center.y + Math.sin(a2) * smallR },
-        lotPoly[3]
-      ];
-      const sCx = (smallPoly[0].x+smallPoly[1].x+smallPoly[2].x+smallPoly[3].x)/4;
-      const sCy = (smallPoly[0].y+smallPoly[1].y+smallPoly[2].y+smallPoly[3].y)/4;
-      if (!pointInPolygon({ x: sCx, y: sCy }, buffer)) continue;
-      // Use smaller lot
-      lotPoly[1] = smallPoly[1];
-      lotPoly[2] = smallPoly[2];
-    }
-
-    const lotCx = (lotPoly[0].x+lotPoly[1].x+lotPoly[2].x+lotPoly[3].x)/4;
-    const lotCy = (lotPoly[0].y+lotPoly[1].y+lotPoly[2].y+lotPoly[3].y)/4;
-
     const area = polygonArea(lotPoly);
-    if (area < 200) continue;
-
     lots.push({
       polygon: lotPoly,
       area: area,
-      number: lotNumStart + lots.length,
+      number: lotNumStart + i,
       compliant: area >= params.minLotArea,
       width: rowRadius * angleStep,
       depth: lotDepth
