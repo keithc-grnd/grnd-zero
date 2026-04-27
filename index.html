@@ -5201,7 +5201,11 @@ state.placingCds = false;
 state.placingKnuckle = false;
 state.editMode = false;
 state.selectedStreet = -1;
+state.selectedCds = -1;
+state.selectedKnuckle = -1;
 state.draggingStreet = false;
+state.draggingCds = false;
+state.draggingKnuckle = false;
 state.manualEntries = [];     // user-placed entries
 state.manualStreets = [];     // user-placed streets
 state.manualCds = [];         // user-placed cul-de-sacs
@@ -6767,10 +6771,44 @@ canvas.addEventListener('click', function(e) {
   if (state.placingKnuckle) { placeKnuckleAt(wx, wy); return; }
   if (state.placingBasin) { placeBasinPoint(wx, wy); return; }
 
-  // Edit mode: select street
+  // Edit mode: select street, cul-de-sac, or knuckle
   if (state.editMode) {
+    // Check cul-de-sacs first
+    let foundCds = -1;
+    for (let ci = 0; ci < state.culdesacs.length; ci++) {
+      if (Math.hypot(wx - state.culdesacs[ci].center.x, wy - state.culdesacs[ci].center.y) < state.culdesacs[ci].rowRadius + 20) {
+        foundCds = ci; break;
+      }
+    }
+    if (foundCds >= 0) {
+      state.selectedCds = foundCds;
+      state.selectedStreet = -1;
+      render();
+      showToast('Selected cul-de-sac — drag to move', 'info');
+      return;
+    }
+
+    // Check knuckles
+    let foundKnuckle = -1;
+    for (let ki = 0; ki < state.knuckles.length; ki++) {
+      if (Math.hypot(wx - state.knuckles[ki].center.x, wy - state.knuckles[ki].center.y) < state.knuckles[ki].radius + 10) {
+        foundKnuckle = ki; break;
+      }
+    }
+    if (foundKnuckle >= 0) {
+      state.selectedKnuckle = foundKnuckle;
+      state.selectedStreet = -1;
+      state.selectedCds = -1;
+      render();
+      showToast('Selected knuckle — drag to move', 'info');
+      return;
+    }
+
+    // Check streets
     const idx = findNearestStreet(wx, wy, state.scale * 20 / state.zoom);
     state.selectedStreet = idx;
+    state.selectedCds = -1;
+    state.selectedKnuckle = -1;
     render();
     if (idx >= 0) {
       const st = state.streets[idx];
@@ -6798,6 +6836,17 @@ canvas.addEventListener('dblclick', function(e) {
 
 // Edit mode street dragging + Background image drag
 canvas.addEventListener('mousedown', function(e) {
+  // Drag cul-de-sac or knuckle
+  if (state.editMode && e.button === 0 && !e.shiftKey && (state.selectedCds >= 0 || state.selectedKnuckle >= 0)) {
+    const rect = canvas.getBoundingClientRect();
+    state.dragLastX = e.clientX - rect.left;
+    state.dragLastY = e.clientY - rect.top;
+    state.draggingCds = state.selectedCds >= 0;
+    state.draggingKnuckle = state.selectedKnuckle >= 0;
+    canvas.style.cursor = 'move';
+    e.preventDefault();
+    return;
+  }
   if (state.editMode && state.selectedStreet >= 0 && e.button === 0 && !e.shiftKey) {
     const rect = canvas.getBoundingClientRect();
     state.dragLastX = e.clientX - rect.left;
@@ -6840,6 +6889,29 @@ canvas.addEventListener('mousedown', function(e) {
 });
 
 canvas.addEventListener('mousemove', function(e) {
+  // CDS or knuckle dragging
+  if (state.draggingCds && state.selectedCds >= 0) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const dx = (sx - state.dragLastX) / state.zoom * state.scale;
+    const dy = -(sy - state.dragLastY) / state.zoom * state.scale;
+    state.culdesacs[state.selectedCds].center.x += dx;
+    state.culdesacs[state.selectedCds].center.y += dy;
+    state.dragLastX = sx; state.dragLastY = sy;
+    render();
+    return;
+  }
+  if (state.draggingKnuckle && state.selectedKnuckle >= 0) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const dx = (sx - state.dragLastX) / state.zoom * state.scale;
+    const dy = -(sy - state.dragLastY) / state.zoom * state.scale;
+    state.knuckles[state.selectedKnuckle].center.x += dx;
+    state.knuckles[state.selectedKnuckle].center.y += dy;
+    state.dragLastX = sx; state.dragLastY = sy;
+    render();
+    return;
+  }
   // Street dragging or bending in edit mode
   if ((state.draggingStreet || state.bendingStreet) && state.selectedStreet >= 0) {
     const rect = canvas.getBoundingClientRect();
@@ -6885,6 +6957,19 @@ canvas.addEventListener('mousemove', function(e) {
 });
 
 canvas.addEventListener('mouseup', function(e) {
+  if (state.draggingCds) {
+    state.draggingCds = false;
+    canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
+    cleanupPerimeterLots();
+    regenerateLots();
+    showToast('Cul-de-sac moved — lots updated', 'info');
+  }
+  if (state.draggingKnuckle) {
+    state.draggingKnuckle = false;
+    canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
+    render();
+    showToast('Knuckle moved', 'info');
+  }
   if (state.draggingStreet) {
     state.draggingStreet = false;
     canvas.style.cursor = state.editMode ? 'pointer' : 'crosshair';
