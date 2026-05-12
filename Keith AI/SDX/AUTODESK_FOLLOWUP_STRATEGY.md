@@ -39,35 +39,63 @@ Autodesk announced InfoDrainage 2027 with improved "Civil 3D interoperability." 
 
 ---
 
-## The Follow-Up Play
+## Who Looked You Up -- and Why It Changes Everything
 
-### Why a different approach this time
+**Dan Lohmeyer** viewed your LinkedIn profile after the March letters.
 
-The March letters were a cold board-level approach with a $40M acquisition ask. That's the right move for awareness -- and it worked (LinkedIn lookup). But awareness didn't convert to action because:
-- Board members don't respond to acquisition inquiries -- they delegate or ignore
-- $40M cold is a big number to process without seeing the product
-- There was no urgency mechanism beyond competitive threats
+Dan Lohmeyer is **VP of Product Development, Building & Infrastructure Design at Autodesk.** He owns Civil 3D, Revit, InfraWorks, Dynamo, and ReCap. He is responsible for product strategy, product management, software development, and quality assurance across that entire portfolio. His team is the one building the Civil 3D Drainage Analysis Technical Preview.
 
-### What to do now
+He is not a board member. He is not an assistant. He is the exact person whose team is trying -- and failing -- to build what SDX already does.
 
-**Target the operator, not the board.** One letter. One person. Amy Bunszel.
+**His background:** MIT (MS in EE and CS), McKinsey, Microsoft, GE Digital, Cisco. 25 years of enterprise software. He understands product-market fit, build-vs-buy decisions, and competitive positioning. He looked you up because he understands what your letter described.
 
-She is the EVP of Architecture, Engineering & Construction Solutions. She owns the product decisions for Civil 3D, InfoDrainage, and the Drainage Analysis preview. She was CC'd on the March letters, so she has context. She's the person whose team is currently failing to solve the problem SDX solves.
-
-**Lead with what she's seeing internally.** Her team just shipped a Technical Preview that proves InfoDrainage can't do the job alone. Her team is writing blog posts explaining to customers why they need three different tools. Her team is announcing InfoDrainage 2027 with "better Civil 3D interop" -- the same promise they've been making since 2021. She knows this isn't working.
-
-**Lower the barrier from $40M acquisition to 30-minute demo.** Don't repeat the March ask. The ask now is: "Let your product team see SDX run. 30 minutes. If it's not better than what you're building, you've lost nothing."
-
-**Create urgency with the Bentley parallel.** Don't name Bentley. Reference "a parallel strategic inquiry with a direct OpenFlows competitor" and note that exclusivity is time-limited.
+The fact that he viewed your profile means:
+- The March letters reached the product organization (likely routed by Amy Bunszel or Anagnost)
+- Dan read enough to want to know who you are
+- He has not been empowered or directed to respond -- but he's aware
 
 ---
 
-## The Letter
+## The Follow-Up Play
+
+### Previous approach (did not work)
+
+Two FedExes to Amy Bunszel. Board-level letters. $40M acquisition ask. No response from Amy on either.
+
+### New approach: Direct LinkedIn message to Dan Lohmeyer
+
+Dan already broke the ice by viewing your profile. He owns the product. He's the decision-maker on build-vs-buy for drainage. A LinkedIn message bypasses the corporate mail routing that killed the previous letters.
+
+### The Message
+
+> Mr. Lohmeyer -- I noticed you viewed my profile. I'm the engineer who sent the SDX acquisition proposal to your board in March. Your team just shipped the Drainage Analysis Technical Preview in Civil 3D 2026. I built what that preview is trying to become -- in production, with California agency compliance, running 10-15x faster than InfoDrainage. I'd welcome 30 minutes to show your product team what SDX does. (951) 323-4713 / keith@ccocivil.com
+
+### Why this works
+
+- **He already knows who you are** -- he looked you up
+- **It's short** -- not a 4-page letter, just a direct ask
+- **It references his own product** -- the Technical Preview he is responsible for
+- **The ask is small** -- 30 minutes, not $40M
+- **LinkedIn is direct** -- no mailroom, no assistant, no corporate routing
+
+---
+
+## Timing
+
+- **Send the LinkedIn message now** (week of May 12)
+- **Bentley:** Give Bentley its full response window -- you sent May 5, it's only been one week. The Bentley brief is excellent and properly routed through their CLO for internal distribution. Let that process work.
+- **If neither responds by June 1:** Shift to Nemetschek and Trimble with the letters already prepared in the outreach file.
+
+---
+
+## Archive: Amy Bunszel FedEx Letter (Superseded by LinkedIn approach)
+
+The letter below was drafted before identifying Dan Lohmeyer as the LinkedIn viewer. It is preserved here in case a formal follow-up to Amy is needed later, but the primary approach is now the direct LinkedIn message to Lohmeyer.
 
 **To:** Amy Bunszel, EVP Architecture, Engineering & Construction Solutions
 **From:** Keith Christiansen, PE
 **Subject:** Follow-up: SDX vs. your Civil 3D Drainage Analysis Technical Preview
-**Send via:** FedEx Priority Overnight to San Francisco + email if you can obtain her direct email
+**Send via:** FedEx Priority Overnight to San Francisco
 
 ---
 
@@ -117,9 +145,20 @@ California RCE License No. 50083
 
 ---
 
-## Timing
+## Background: What Autodesk Has Done Since March
 
-- **Send this week** (week of May 12)
-- **Follow up by phone** to Autodesk AEC division the following week
-- **Bentley:** Give Bentley its full response window -- you sent May 5, it's only been one week. The Bentley brief is excellent and properly routed through their CLO for internal distribution. Let that process work.
-- **If neither responds by June 1:** Shift to Nemetschek and Trimble with the letters already prepared in the outreach file.
+(Preserved for reference)
+
+### 1. "InfoDrainage vs Civil 3D drainage tools" Blog Post (March 11, 2026)
+Published 5 days BEFORE your letters arrived. Autodesk is publicly trying to explain to their own customers how their drainage tools fit together. They have three products (InfoDrainage, Civil 3D Storm & Sanitary Analysis, and the new Drainage Analysis preview) and are writing blog posts explaining which one to use when. That confusion IS the problem. SDX eliminates it.
+
+### 2. Civil 3D 2026 Drainage Analysis Technical Preview (Shipped Spring 2025, updated 2026)
+Cloud-based tool that sends drainage data to InfoDrainage's backend servers for analysis, then returns results to Civil 3D. Key limitations:
+- **Cloud-dependent** -- requires internet connection and InfoDrainage cloud services
+- **Still a "Technical Preview"** -- not production-ready, Autodesk's own words
+- **No pre-built U.S. agency compliance libraries** -- no California jurisdictions
+- **Depends on InfoDrainage backend** -- the same UK-designed engine that doesn't fit U.S. workflows
+- **They acknowledge it is not a replacement for InfoDrainage** and doesn't cover every scenario
+
+### 3. InfoDrainage 2027 Announcement (April 7, 2026)
+Autodesk announced InfoDrainage 2027 with improved "Civil 3D interoperability." After 5 years and $1B, they are STILL trying to make InfoDrainage talk to Civil 3D. SDX does this natively.
